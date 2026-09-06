@@ -242,7 +242,6 @@
  * text character-per-line.
  */
 
-.messageBlock > .replyBar,
 .messageBlock > .reactions,
 .messageBlock > .v2wrap,
 .messageBlock > .v2poll,
@@ -255,7 +254,6 @@
     max-width: 100%;
 }
 
-.messageBlock:not(.firstmsg) > .replyBar,
 .messageBlock:not(.firstmsg) > .reactions,
 .messageBlock:not(.firstmsg) > .v2wrap,
 .messageBlock:not(.firstmsg) > .v2poll,
@@ -263,6 +261,32 @@
 .messageBlock:not(.firstmsg) > .previewImage,
 .messageBlock:not(.firstmsg) > video.previewImage,
 .messageBlock:not(.firstmsg) > audio {
+    grid-column: 1;
+}
+
+/* Reply quote always tops the message: full-width first row, with the
+ * avatar + name/time + text re-pinned to the rows below it. Scoped with
+ * :has() so messages without quotes keep their exact current layout. */
+.messageBlock:has(> .replyBar) > .replyBar {
+    grid-column: 1 / -1;
+    grid-row: 1;
+}
+
+.messageBlock:has(> .replyBar) > .messageImg {
+    grid-row: 2 / span 2;
+}
+
+.messageBlock:has(> .replyBar) > .messageUsername {
+    grid-row: 2;
+    grid-column: 2;
+}
+
+.messageBlock:has(> .replyBar) > .messageText {
+    grid-row: 3;
+}
+
+.messageBlock:not(.firstmsg):has(> .replyBar) > .messageText {
+    grid-row: 2;
     grid-column: 1;
 }
 
@@ -766,16 +790,17 @@
     color: #b9bbbe;
 }
 
-/* thread spine: vertical from the avatar side, 90° curve into the quote */
+/* thread spine: vertical drops from the quote toward the reply author's
+ * avatar, curving 90° at the top into the quoted line (Discord's ╭) */
 .replySpine {
     flex-shrink: 0;
     width: 22px;
     height: 16px;
-    margin-left: 8px;
-    margin-bottom: -4px;
+    margin-left: 12px;
+    margin-top: 2px;
     border-left: 2px solid #4f545c;
-    border-bottom: 2px solid #4f545c;
-    border-bottom-left-radius: 8px;
+    border-top: 2px solid #4f545c;
+    border-top-left-radius: 8px;
 }
 
 .replyAvatar {

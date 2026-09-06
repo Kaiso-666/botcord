@@ -9,7 +9,7 @@
 
 // Must match SERVER_VERSION in server.py. Checked on startup so a stale
 // server or cached site fails with a clear message instead of hanging.
-const CLIENT_VERSION = 11;
+const CLIENT_VERSION = 12;
 
 const S = {
     me: null,
@@ -1261,8 +1261,19 @@ function renderReplyBar(m, parent) {
             const nameNode = target.querySelector('.messageUsername');
             const textNode = target.querySelector('.messageText');
             const imgNode = target.querySelector('.messageImg');
+            // the timestamp nests inside .messageUsername: strip it so the
+            // quote shows just the name, like Discord
+            let author = 'a message';
+            try {
+                const clone = nameNode.cloneNode(true);
+                const tsKid = clone.querySelector('.messageTimestamp');
+                if (tsKid) tsKid.remove();
+                if (nodeText(clone).trim()) author = nodeText(clone).trim();
+            } catch (e) {
+                if (nodeText(nameNode)) author = nodeText(nameNode);
+            }
             const entry = {
-                name: nodeText(nameNode) || 'a message',
+                name: author,
                 snippet: nodeText(textNode).slice(0, 80),
                 avatar: (imgNode && imgNode.src) || null,
                 color:
@@ -1333,10 +1344,12 @@ function addHeader(darkBG, m) {
     });
     darkBG.insertBefore(uname, img.nextSibling);
 
-    const ts = el('p', 'messageTimestamp');
+    // Timestamp lives INSIDE the username element so name + time always
+    // flow inline together (separate grid cells would stack or overlap).
+    const ts = el('span', 'messageTimestamp');
     ts.innerText = ' ' + formatMsgTime(m.timestamp);
     ts.title = fullMsgTime(m.timestamp);
-    darkBG.insertBefore(ts, uname.nextSibling);
+    uname.appendChild(ts);
 }
 
 function appendMessage(m, prev) {
