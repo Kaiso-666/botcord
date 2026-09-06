@@ -120,6 +120,10 @@ silently. The usual causes:
 * Sending, inline edit, delete, pin/unpin, purge (`/purge <n>`)
 * Instant sends: your message appears immediately, greyed out, and turns
   normal once the server confirms it (red + click-to-retry on failure)
+* Composer: attachment (+) button, voice-message recorder (🎤, sent as an
+  audio file), emoji picker (😀, unicode + server emoji); uploads cap 25 MB
+* Smart timestamps (time-only for today) with labeled Today / Yesterday /
+  date dividers between days
 * Discord-style shimmer skeletons while a channel's messages load
 * Replies: right-click → Reply, composer bar above the input with an
   @ON/@OFF ping toggle, quoted preview on messages (click jumps to the

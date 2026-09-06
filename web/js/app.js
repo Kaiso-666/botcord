@@ -9,7 +9,7 @@
 
 // Must match SERVER_VERSION in server.py. Checked on startup so a stale
 // server or cached site fails with a clear message instead of hanging.
-const CLIENT_VERSION = 10;
+const CLIENT_VERSION = 11;
 
 const S = {
     me: null,
@@ -393,6 +393,8 @@ function errorHandler(err) {
         'MISSING-PERMISSIONS': "The bot doesn't have permission to do that",
         'REACTION-FAILED': 'Could not add that reaction — check the emoji and try again',
         'BAD-EMOJI': 'Pick an emoji first',
+        'FILE-TOO-LARGE': 'That file is over 25 MB — Discord will not take it',
+        'BAD-UPLOAD': 'Could not read that file — try another one',
         'UNKNOWN-CHANNEL': 'That channel is no longer available — try another one',
         'UNKNOWN-GUILD': 'That server is no longer available — try another one',
         'MEMBER-FETCH-FAILED':
@@ -973,11 +975,99 @@ function shouldGroup(m, prev) {
     return diff < 7 * 60 * 1000; // 7 minutes, like Discord
 }
 
+/* Discord-style timestamps: time only for today ("4:20 PM"), "Yesterday
+ * at …" for yesterday, full date + time when older. Day dividers label the
+ * same way ("Today" / "Yesterday" / "September 7, 2026"). */
+
+function startOfDay(d) {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+}
+
+function dayDiffDays(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return null;
+    return Math.round((startOfDay(new Date()) - startOfDay(d)) / 86400000);
+}
+
+function msgTime(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    try {
+        return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    } catch (e) {
+        return '';
+    }
+}
+
+function formatMsgTime(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    const diff = dayDiffDays(iso);
+    const time = msgTime(iso);
+    if (diff === 0) return time; // today: time only, like Discord
+    if (diff === 1) return `Yesterday at ${time}`;
+    try {
+        return d.toLocaleString('en-US', {
+            month: '2-digit',
+            day: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+    } catch (e) {
+        return time;
+    }
+}
+
+function fullMsgTime(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    try {
+        return d.toLocaleString('en-US', {
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+        });
+    } catch (e) {
+        return String(iso);
+    }
+}
+
+function dayLabel(iso) {
+    const diff = dayDiffDays(iso);
+    if (diff === 0) return 'Today';
+    if (diff === 1) return 'Yesterday';
+    if (diff === -1) return 'Tomorrow';
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    try {
+        return d.toLocaleDateString('en-US', {
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+        });
+    } catch (e) {
+        return '';
+    }
+}
+
+function daySeparator(iso) {
+    const sep = el('div', 'daySeparator');
+    sep.appendChild(el('span', 'dayLabel', dayLabel(iso) || ''));
+    return sep;
+}
+
 function messageBlock(m) {
     const darkBG = el('div', 'messageBlock');
     darkBG.id = m.id;
     darkBG.dataset.content = m.content || '';
     darkBG.dataset.authorId = m.author.id;
+    darkBG.dataset.timestamp = m.timestamp || '';
 
     const isDM = !m.guild_id;
     renderReplyBar(m, darkBG);
@@ -999,6 +1089,14 @@ function messageBlock(m) {
         showLinkPreviews(m, darkBG);
     } catch (err) {
         console.error('link preview failed', err);
+    }
+    if (m.uploading) {
+        const up = el('div', 'uploading');
+        up.appendChild(el('span', 'uploadName', `📎 ${m.uploading.name || 'file'}`));
+        const track = el('div', 'uploadTrack');
+        track.appendChild(el('div', 'uploadFill'));
+        up.appendChild(track);
+        darkBG.appendChild(up);
     }
     try {
         renderComponentsV2(m, darkBG, isDM);
@@ -1037,32 +1135,105 @@ function nodeText(n) {
     }
 }
 
-// Quoted reply header, like Discord: "↩ Alice snippet". Jumps to the
-// referenced message when it is loaded; otherwise shows a fetched preview
-// (cached) and says so on click.
+// Discord-style quoted reply: curved thread spine from the avatar side,
+// the original author's tiny avatar + colored name + grey snippet on one
+// line. Jumps to the original when loaded, else a fetched preview (cached).
+function quotePreviewFor(om) {
+    let text = '';
+    try {
+        text = ((om.content || '').trim()).slice(0, 80);
+    } catch (e) {
+        text = '';
+    }
+    let hasMedia = false;
+    try {
+        hasMedia = ((om.attachments || []).length > 0);
+        if (!hasMedia) {
+            hasMedia = (om.embeds || []).some(
+                (e) =>
+                    e &&
+                    (e.image ||
+                        e.thumbnail ||
+                        e.video ||
+                        ['image', 'gifv', 'video'].includes(e.type))
+            );
+        }
+    } catch (e) {
+        hasMedia = false;
+    }
+    let color = null;
+    try {
+        color = (om.member && om.member.color) || null;
+    } catch (e) {
+        color = null;
+    }
+    let avatar = null;
+    try {
+        avatar = (om.author && om.author.avatar) || null;
+    } catch (e) {
+        avatar = null;
+    }
+    return {
+        name: replyNameFor(om),
+        snippet: text,
+        avatar,
+        color,
+        hasMedia,
+        mediaOnly: !text && hasMedia,
+    };
+}
+
 function renderReplyBar(m, parent) {
     const ref = m.reference;
     if (!ref || !ref.message_id) return;
-    const bar = el('div', 'replyBar');
+    const bar = el('div', 'replyBar replyQuote');
     bar.title = 'Jump to replied message';
-    bar.appendChild(el('span', 'replyArrow', '↩ '));
+    bar.appendChild(el('span', 'replySpine'));
+    const av = el('img', 'replyAvatar');
+    av.src = DEFAULT_AVATAR;
+    av.alt = '';
+    av.draggable = false;
     const authorEl = el('span', 'replyAuthor', '…');
     const snippetEl = el('span', 'replySnippet', '');
+    bar.appendChild(av);
     bar.appendChild(authorEl);
     bar.appendChild(snippetEl);
     parent.appendChild(bar);
 
-    const fillSync = (name, snippet) => {
-        // construction-time: the bar isn't in the document yet, so fill
-        // unconditionally — it renders with the node on append.
-        authorEl.innerText = name || 'unknown';
-        snippetEl.innerText = snippet ? `  ${String(snippet).slice(0, 80)}` : '';
+    const paint = (entry) => {
+        entry = entry || {};
+        authorEl.innerText = entry.name || 'unknown';
+        if (entry.color) {
+            try {
+                authorEl.style.color = entry.color;
+            } catch (e) {
+                /* ignore */
+            }
+        }
+        if (entry.avatar) {
+            try {
+                av.src = entry.avatar;
+            } catch (e) {
+                /* ignore */
+            }
+        }
+        snippetEl.classList.toggle('replyMediaOnly', !!entry.mediaOnly);
+        if (entry.mediaOnly) {
+            snippetEl.innerText = '🖼 Tap to view attachment';
+        } else {
+            snippetEl.innerText =
+                (entry.hasMedia ? '🖼 ' : '') +
+                (entry.snippet ? String(entry.snippet).slice(0, 80) : '');
+        }
     };
-    const fillAsync = (name, snippet) => {
+    // construction-time: the bar isn't in the document yet, so sync fills
+    // apply unconditionally — they render with the node on append.
+    const fillSync = (entry) => paint(entry);
+    const fillAsync = (entry) => {
         // fetch-time: only touch the bar if it actually made it into the
         // DOM and is still there (message may have been deleted already).
         if (!bar.isConnected) return;
-        fillSync(name, snippet);
+        paint(entry);
     };
     const jump = () => {
         const target = document.getElementById(ref.message_id);
@@ -1087,14 +1258,23 @@ function renderReplyBar(m, parent) {
     try {
         const target = document.getElementById(ref.message_id);
         if (target) {
-            let author = 'a message';
-            let snippet = '';
             const nameNode = target.querySelector('.messageUsername');
-            if (nodeText(nameNode)) author = nodeText(nameNode);
             const textNode = target.querySelector('.messageText');
-            if (nodeText(textNode)) snippet = nodeText(textNode).slice(0, 80);
-            fillSync(author, snippet);
-            ReplyCache.set(String(ref.message_id), { name: author, snippet });
+            const imgNode = target.querySelector('.messageImg');
+            const entry = {
+                name: nodeText(nameNode) || 'a message',
+                snippet: nodeText(textNode).slice(0, 80),
+                avatar: (imgNode && imgNode.src) || null,
+                color:
+                    (nameNode && nameNode.style && nameNode.style.color) || null,
+                hasMedia: !!target.querySelector(
+                    'img.linkPreview-img, img.embedImage, img.previewImage, video, audio'
+                ),
+                mediaOnly: false,
+            };
+            entry.mediaOnly = !entry.snippet && entry.hasMedia;
+            fillSync(entry);
+            ReplyCache.set(String(ref.message_id), entry);
             return;
         }
     } catch (e) {
@@ -1103,21 +1283,20 @@ function renderReplyBar(m, parent) {
     // 2. cached preview?
     const cached = ReplyCache.get(String(ref.message_id));
     if (cached) {
-        fillSync(cached.name, cached.snippet);
+        fillSync(cached);
         return;
     }
-    // 3. fetch the original for a preview (author + snippet only).
-    fillSync('…', '');
+    // 3. fetch the original for a preview.
+    fillSync({ name: '…', snippet: '', avatar: null, color: null });
     Api.message(m.channel_id, ref.message_id)
         .then((res) => {
             if (!res || !res.message) throw new Error('no message');
-            const om = res.message;
-            const entry = { name: replyNameFor(om), snippet: replySnippetFor(om) };
+            const entry = quotePreviewFor(res.message);
             if (ReplyCache.size > 200) ReplyCache.clear();
             ReplyCache.set(String(ref.message_id), entry);
-            fillAsync(entry.name, entry.snippet);
+            fillAsync(entry);
         })
-        .catch(() => fillAsync('deleted message', ''));
+        .catch(() => fillAsync({ name: 'deleted message' }));
 }
 
 function addHeader(darkBG, m) {
@@ -1155,15 +1334,8 @@ function addHeader(darkBG, m) {
     darkBG.insertBefore(uname, img.nextSibling);
 
     const ts = el('p', 'messageTimestamp');
-    ts.innerText =
-        ' ' +
-        new Date(m.timestamp).toLocaleString('en-US', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-        });
+    ts.innerText = ' ' + formatMsgTime(m.timestamp);
+    ts.title = fullMsgTime(m.timestamp);
     darkBG.insertBefore(ts, uname.nextSibling);
 }
 
@@ -1186,7 +1358,6 @@ function appendMessage(m, prev) {
     if (!m.guild_id) div.classList.add('dms');
     const darkBG = messageBlock(m);
     darkBG.classList.add('firstmsg');
-    if (prev && !sameDay(prev.timestamp, m.timestamp)) div.classList.add('timeSeparated');
 
     addHeader(darkBG, m);
 
@@ -1216,10 +1387,15 @@ function buildMessageSkeletons(n) {
     }
     return wrap;
 }
-
-function renderMessages(messages) {    clearMessages();
+function renderMessages(messages) {
+    clearMessages();
+    const list = $('message-list');
     let prev = null;
     messages.forEach((m, i) => {
+        // day divider with a label, Discord-style ("Today" / "Yesterday" / date)
+        if (!prev || !sameDay(prev.timestamp, m.timestamp)) {
+            list.appendChild(daySeparator(m.timestamp));
+        }
         appendMessage(m, prev);
         prev = m;
     });
@@ -2525,6 +2701,363 @@ async function sendText(content, embed, opts) {
     }
 }
 
+/* ============ composer: attachments, voice, emoji (Discord-style) ======
+ * [+] on the left uploads a file, [🎤] records a voice message, [😀]
+ * opens an emoji picker — all wired into the same optimistic pipeline.
+ */
+
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+function insertAtCursor(text) {
+    const box = $('msgbox');
+    if (!box) return;
+    const s = box.selectionStart != null ? box.selectionStart : box.value.length;
+    const e = box.selectionEnd != null ? box.selectionEnd : box.value.length;
+    box.value = box.value.slice(0, s) + text + box.value.slice(e);
+    const pos = s + String(text).length;
+    try {
+        box.focus();
+        box.setSelectionRange(pos, pos);
+    } catch (err) {
+        /* ignore */
+    }
+    syncMentionBackdrop();
+    sendTyping();
+}
+
+function ensureComposerButtons() {
+    const bar = $('messageBar');
+    const misc = $('msgMisc');
+    if (bar && !$('attachBtn')) {
+        // [+] on the left of the message bar
+        const plus = document.createElement('button');
+        plus.id = 'attachBtn';
+        plus.type = 'button';
+        plus.title = 'Attach a file';
+        plus.innerText = '+';
+        plus.addEventListener('click', () => {
+            if (!S.channel) {
+                toast('Select a channel first');
+                return;
+            }
+            const inp = $('fileInput');
+            if (inp) inp.click();
+        });
+        bar.insertBefore(plus, bar.firstChild);
+        // hidden picker behind the [+] button
+        if (!$('fileInput')) {
+            const inp = document.createElement('input');
+            inp.type = 'file';
+            inp.id = 'fileInput';
+            inp.className = 'hidden';
+            inp.addEventListener('change', () => {
+                const f = inp.files && inp.files[0];
+                inp.value = '';
+                if (f) sendFileMessage(f);
+            });
+            document.body.appendChild(inp);
+        }
+    }
+    if (misc && !$('emojiBtn')) {
+        // emoji + voice on the right, next to the embed icon
+        const anchor = $('embedBuilderIcon');
+        const emoji = document.createElement('button');
+        emoji.id = 'emojiBtn';
+        emoji.type = 'button';
+        emoji.className = 'compIconBtn';
+        emoji.title = 'Emoji';
+        emoji.innerText = '😀';
+        emoji.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleComposerEmoji(emoji);
+        });
+        const voice = document.createElement('button');
+        voice.id = 'voiceBtn';
+        voice.type = 'button';
+        voice.className = 'compIconBtn';
+        voice.title = 'Record a voice message';
+        voice.innerText = '🎤';
+        voice.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleVoice();
+        });
+        misc.insertBefore(voice, anchor);
+        misc.insertBefore(emoji, voice);
+    }
+}
+
+async function sendFileMessage(file, opts) {
+    opts = opts || {};
+    if (!S.channel) {
+        toast('Select a channel first');
+        return;
+    }
+    if (!file) return;
+    if (file.size > MAX_UPLOAD_BYTES) {
+        errorHandler({ code: 'FILE-TOO-LARGE' });
+        return;
+    }
+    if (!file.size) {
+        errorHandler({ code: 'BAD-UPLOAD' });
+        return;
+    }
+    const channel = S.channel;
+    const caption =
+        opts.caption !== undefined ? opts.caption : $('msgbox').value;
+    if (!caption.trim()) {
+        // file-only send, like dropping a file into Discord
+    }
+    const r =
+        opts.replyTo !== undefined
+            ? opts.replyTo
+            : S.replyTo && S.replyTo.channel_id === channel.id
+              ? S.replyTo
+              : null;
+    const mention = opts.mention !== undefined ? opts.mention : S.replyMention;
+    const tempId = 'pending-' + Date.now().toString(36) + '-' + ++pendingSeq;
+    const temp = makePendingMessage(tempId, channel, caption, null, r);
+    temp.uploading = { name: file.name, size: file.size };
+    PendingSends.set(tempId, {
+        content: caption,
+        embed: null,
+        file,
+        reply: r,
+        mention,
+        channelId: channel.id,
+        msg: temp,
+    });
+    handleIncomingMessage(temp);
+    const node = document.getElementById(tempId);
+    if (node) node.classList.add('pending');
+    $('msgbox').value = '';
+    syncMentionBackdrop();
+    const list = $('message-list');
+    list.scrollTop = list.scrollHeight;
+    try {
+        const res = await Api.sendFile(channel.id, {
+            file,
+            content: caption,
+            reply_to: r ? r.id : null,
+            mention_author: mention,
+        });
+        PendingSends.delete(tempId);
+        if (!S.channel || S.channel.id !== channel.id) return;
+        removeMessageDom(tempId);
+        if (res.message) handleIncomingMessage(res.message);
+        if (r && S.replyTo && S.replyTo.id === r.id) cancelReply();
+        list.scrollTop = list.scrollHeight;
+    } catch (e) {
+        if (S.channel && S.channel.id === channel.id) markSendFailed(tempId);
+        else {
+            PendingSends.delete(tempId);
+            removeMessageDom(tempId);
+        }
+        errorHandler(e);
+    }
+}
+
+/* ---- composer emoji picker ---- */
+
+function closeComposerEmoji() {
+    const p = $('composerEmoji');
+    if (p) p.remove();
+}
+
+function toggleComposerEmoji(anchorBtn) {
+    const old = $('composerEmoji');
+    closeComposerEmoji();
+    closeEmojiPicker();
+    if (old) return; // was open: just close
+    if (!S.channel) {
+        toast('Select a channel first');
+        return;
+    }
+    const pop = el('div', 'emojiPicker');
+    pop.id = 'composerEmoji';
+    QUICK_EMOJIS.forEach((ch) => {
+        const b = el('div', 'emojiPick', ch);
+        b.title = ch;
+        b.addEventListener('click', () => {
+            insertAtCursor(ch);
+            closeComposerEmoji();
+        });
+        pop.appendChild(b);
+    });
+    const customs = (S.emojis || []).slice(0, 48);
+    if (customs.length) {
+        pop.appendChild(el('div', 'emojiSep'));
+        customs.forEach((e) => {
+            const b = el('div', 'emojiPick');
+            b.title = `:${e.name}:`;
+            const img = el('img', 'emojiPickImg');
+            img.src = e.url;
+            img.alt = e.name;
+            img.loading = 'lazy';
+            b.appendChild(img);
+            b.addEventListener('click', () => {
+                insertAtCursor(`<:${e.name}:${e.id}>`);
+                closeComposerEmoji();
+            });
+            pop.appendChild(b);
+        });
+    }
+    document.body.appendChild(pop);
+    const br = anchorBtn.getBoundingClientRect();
+    const r = pop.getBoundingClientRect();
+    pop.style.left =
+        Math.max(8, Math.min(br.left, window.innerWidth - r.width - 8)) + 'px';
+    pop.style.top = Math.max(8, br.top - r.height - 8) + 'px';
+    setTimeout(() => {
+        document.addEventListener('click', function h(ev) {
+            if (!pop.contains(ev.target)) {
+                closeComposerEmoji();
+                document.removeEventListener('click', h);
+            }
+        });
+    }, 0);
+}
+
+/* ---- voice messages ---- */
+
+let voiceRec = null; // {rec, chunks, stream, timer, startedAt, mime}
+
+function pickVoiceMime() {
+    if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) {
+        return '';
+    }
+    const cands = [
+        'audio/ogg;codecs=opus',
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4',
+    ];
+    for (const c of cands) {
+        try {
+            if (MediaRecorder.isTypeSupported(c)) return c;
+        } catch (e) {
+            /* ignore */
+        }
+    }
+    return '';
+}
+
+function voiceExt(mime) {
+    if (String(mime).includes('ogg')) return '.ogg';
+    if (String(mime).includes('mp4')) return '.m4a';
+    return '.webm';
+}
+
+function ensureVoiceBar() {
+    if ($('voiceBar')) return;
+    const sendmsg = $('sendmsg');
+    const bar = $('messageBar');
+    if (!sendmsg || !bar) return;
+    const v = document.createElement('div');
+    v.id = 'voiceBar';
+    v.className = 'hidden';
+    const dot = el('span', 'recDot');
+    const timer = el('span', 'recTimer', '0:00');
+    timer.id = 'recTimer';
+    const stop = el('button', 'recStop', 'Stop & send');
+    stop.addEventListener('click', () => stopVoice(true));
+    const cancel = el('button', 'recCancel', '✕');
+    cancel.title = 'Discard recording';
+    cancel.addEventListener('click', () => stopVoice(false));
+    v.appendChild(dot);
+    v.appendChild(el('span', '', 'Recording'));
+    v.appendChild(timer);
+    v.appendChild(stop);
+    v.appendChild(cancel);
+    sendmsg.insertBefore(v, bar);
+}
+
+function voiceTick() {
+    const t = $('recTimer');
+    if (!t || !voiceRec) return;
+    const s = Math.floor((Date.now() - voiceRec.startedAt) / 1000);
+    t.innerText = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    if (s >= 300) stopVoice(true); // 5 min cap
+}
+
+async function toggleVoice() {
+    if (voiceRec) {
+        stopVoice(true);
+        return;
+    }
+    if (!S.channel) {
+        toast('Select a channel first');
+        return;
+    }
+    if (
+        !navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia ||
+        typeof MediaRecorder === 'undefined'
+    ) {
+        toast('Voice messages are not supported in this browser');
+        return;
+    }
+    const mime = pickVoiceMime();
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+        voiceRec = {
+            rec,
+            chunks: [],
+            stream,
+            mime: rec.mimeType || mime,
+            startedAt: Date.now(),
+            timer: null,
+        };
+        rec.ondataavailable = (ev) => {
+            if (ev.data && ev.data.size) voiceRec.chunks.push(ev.data);
+        };
+        rec.onstop = () => {
+            const cur = voiceRec;
+            voiceRec = null;
+            const bar = $('voiceBar');
+            if (bar) bar.classList.add('hidden');
+            try {
+                cur.stream.getTracks().forEach((tr) => tr.stop());
+            } catch (e) {
+                /* ignore */
+            }
+            if (cur.send && cur.chunks.length) {
+                const type = cur.mime || 'audio/webm';
+                const blob = new Blob(cur.chunks, { type });
+                const file = new File([blob], 'voice-message' + voiceExt(type), { type });
+                sendFileMessage(file, { caption: '' });
+            }
+        };
+        rec.start(250);
+        ensureVoiceBar();
+        $('voiceBar').classList.remove('hidden');
+        voiceTick();
+        voiceRec.timer = setInterval(voiceTick, 500);
+    } catch (e) {
+        voiceRec = null;
+        toast('Microphone blocked — allow access to record');
+    }
+}
+
+function stopVoice(send) {
+    if (!voiceRec) return;
+    if (voiceRec.timer) {
+        try {
+            clearInterval(voiceRec.timer);
+        } catch (e) {
+            /* ignore */
+        }
+    }
+    voiceRec.send = !!send;
+    try {
+        voiceRec.rec.stop();
+    } catch (e) {
+        voiceRec = null;
+        const bar = $('voiceBar');
+        if (bar) bar.classList.add('hidden');
+    }
+}
+
 /* ---- optimistic (client-sided) sends ---- */
 
 let pendingSeq = 0;
@@ -2605,6 +3138,14 @@ async function retrySend(tempId) {
     }
     removeMessageDom(tempId);
     PendingSends.delete(tempId);
+    if (p.file) {
+        await sendFileMessage(p.file, {
+            caption: p.content,
+            replyTo: p.reply,
+            mention: p.mention,
+        });
+        return;
+    }
     await sendText(p.content, p.embed, { replyTo: p.reply, mention: p.mention });
 }
 
@@ -2624,6 +3165,13 @@ function handleIncomingMessage(m) {
                     // group with the previous message if same author + recent
                     prev = { author: { id: last.dataset.authorId }, timestamp: new Date().toISOString() };
                 }
+                // day divider for live messages crossing midnight, like history
+                if (last.dataset.timestamp && !sameDay(last.dataset.timestamp, m.timestamp)) {
+                    $('message-list').appendChild(daySeparator(m.timestamp));
+                }
+            } else if (m.timestamp) {
+                // first message in an empty view still gets its day label
+                $('message-list').appendChild(daySeparator(m.timestamp));
             }
             appendMessage(m, prev);
         }
@@ -2921,6 +3469,7 @@ function wireSocket() {
 function wireStaticUI() {
     ensureMsgWrap();
     ensureReplyComposer();
+    ensureComposerButtons();
     $('homeBtn').addEventListener('click', showDMHome);
 
     // mobile drawers
@@ -2990,6 +3539,7 @@ function wireStaticUI() {
             closeEmbedModal();
             hideMentionSuggest();
             closeEmojiPicker();
+            closeComposerEmoji();
             cancelReply();
         }
     });

@@ -16,6 +16,7 @@ Then open http://localhost:8080 and paste a bot token.
 
 import argparse
 import asyncio
+import io
 import json
 import logging
 import os
@@ -34,7 +35,7 @@ WEB_DIR = BASE_DIR / "web"
 # Bump whenever the REST/WS contract changes. The site checks this on
 # startup and tells the user to restart / hard-refresh on mismatch
 # instead of hanging on the loader forever.
-SERVER_VERSION = 10
+SERVER_VERSION = 11
 
 log = logging.getLogger("botcord")
 
@@ -44,6 +45,23 @@ log = logging.getLogger("botcord")
 
 _TOKEN_RE = re.compile(r"^[\w\-.]+$")
 _WS_CHARS = (" ", "\t", "\r", "\n")
+
+
+# Discord's per-file upload cap for bots without boosted limits.
+MAX_UPLOAD_BYTES = int(os.environ.get("BOTCORD_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
+
+
+def sanitize_filename(name: str) -> str:
+    """Make an uploaded filename safe to hand to discord.py / Discord."""
+    base = os.path.basename(str(name or "attachment")).strip() or "attachment"
+    base = re.sub(r"[^\w\-. ]+", "_", base).strip(" .") or "attachment"
+    if len(base) > 100:
+        stem, dot, ext = base.rpartition(".")
+        if dot and len(ext) <= 10:
+            base = stem[: 100 - len(ext) - 1] + "." + ext
+        else:
+            base = base[:100]
+    return base
 
 
 def validate_token(token: str = "") -> str | None:
@@ -1167,13 +1185,51 @@ async def api_get_message(request):
 async def api_send_message(request):
     client = require_bot(request)
     channel = get_text_channel(client, request.match_info["cid"])
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    content = body.get("content") or ""
-    embed_data = body.get("embed")
-    if not content.strip() and not embed_data:
+    content = ""
+    embed_data = None
+    reply_to = ""
+    mention_author = True
+    upload = None
+    if request.content_type.startswith("multipart/"):
+        try:
+            form = await request.post()
+        except Exception as exc:
+            return web.json_response(
+                {"error": f"BAD-UPLOAD: {exc}"}, status=400
+            )
+        content = str(form.get("content") or "")
+        raw_embed = form.get("embed")
+        if raw_embed:
+            try:
+                embed_data = json.loads(str(raw_embed))
+            except Exception as exc:
+                return web.json_response(
+                    {"error": f"BAD-EMBED: {exc}"}, status=400
+                )
+        reply_to = str(form.get("reply_to") or "").strip()
+        mention_raw = str(form.get("mention_author") or "true").strip().lower()
+        mention_author = mention_raw not in ("false", "0", "no", "off")
+        field = form.get("file")
+        # aiohttp gives a FileField for real uploads, plain str otherwise
+        if field is not None and getattr(field, "filename", None):
+            upload = field
+    else:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        content = body.get("content") or ""
+        embed_data = body.get("embed")
+        if isinstance(body, dict) and "mention_author" in body:
+            mention_author = bool(body.get("mention_author"))
+        reply_to = body.get("reply_to") or ""
+        try:
+            reply_to = str(reply_to).strip()
+        except Exception:
+            reply_to = ""
+    if not content.strip() and not embed_data and upload is None:
         return web.json_response({"error": "EMPTY-MESSAGE"}, status=400)
     if len(content) > 2000:
         return web.json_response({"error": "MESSAGE-TOO-LONG"}, status=400)
@@ -1188,14 +1244,10 @@ async def api_send_message(request):
     # Discord-style reply: reply_to = message id in this channel.
     # mention_author toggles whether the reply pings the original author.
     reference = None
-    reply_to = (body.get("reply_to") or "") if isinstance(body, dict) else ""
     try:
         reply_to = str(reply_to).strip()
     except Exception:
         reply_to = ""
-    mention_author = True
-    if isinstance(body, dict) and "mention_author" in body:
-        mention_author = bool(body.get("mention_author"))
     if reply_to:
         try:
             ref_msg = await channel.fetch_message(int(reply_to))
@@ -1211,12 +1263,34 @@ async def api_send_message(request):
             reference = ref_msg.to_reference(fail_if_not_exists=False)
         except Exception:
             reference = None
+    # Optional attachment (+ button / voice message in the client).
+    files = []
+    if upload is not None:
+        try:
+            data = upload.file.read()
+        except Exception as exc:
+            return web.json_response(
+                {"error": f"BAD-UPLOAD: {exc}"}, status=400
+            )
+        if len(data) > MAX_UPLOAD_BYTES:
+            return web.json_response({"error": "FILE-TOO-LARGE"}, status=413)
+        if not data:
+            return web.json_response({"error": "BAD-UPLOAD"}, status=400)
+        files = [
+            discord.File(
+                fp=io.BytesIO(data),
+                filename=sanitize_filename(
+                    getattr(upload, "filename", None) or "attachment"
+                ),
+            )
+        ]
     try:
         msg = await channel.send(
             content if content.strip() else None,
             embed=embed,
             reference=reference,
             mention_author=mention_author,
+            files=files or None,
         )
     except discord.Forbidden:
         return web.json_response({"error": "MISSING-PERMISSIONS"}, status=403)

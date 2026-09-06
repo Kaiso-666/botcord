@@ -408,6 +408,179 @@
     letter-spacing: 0.5px;
 }
 
+/* ==================== day separators ====================
+ * Labeled horizontal ruling between days, Discord-style. */
+
+.daySeparator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 14px 16px 6px 0;
+    color: #949ba4;
+    font-size: 12px;
+    font-weight: 700;
+    user-select: none;
+}
+
+.daySeparator::before,
+.daySeparator::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: #3f4147;
+    min-width: 12px;
+}
+
+/* ==================== composer buttons ====================
+ * [+] attach on the left, emoji + voice-note on the right, Discord-style. */
+
+#attachBtn {
+    align-self: center;
+    flex-shrink: 0;
+    width: 30px;
+    height: 30px;
+    margin-left: 10px;
+    border: none;
+    border-radius: 50%;
+    background: #4f545c;
+    color: #dcddde;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 0 2px 0;
+}
+
+#attachBtn:hover {
+    background: #5d6069;
+}
+
+.compIconBtn {
+    background: transparent;
+    border: none;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.6;
+    padding: 3px;
+    border-radius: 4px;
+    align-self: center;
+}
+
+.compIconBtn:hover {
+    opacity: 1;
+}
+
+/* uploading placeholder inside optimistic messages */
+.uploading {
+    margin: 4px 0;
+    max-width: 320px;
+}
+
+.uploadName {
+    display: block;
+    font-size: 13px;
+    color: #b9bbbe;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 6px;
+}
+
+.uploadTrack {
+    height: 6px;
+    border-radius: 3px;
+    background: #2f3136;
+    overflow: hidden;
+}
+
+.uploadFill {
+    height: 100%;
+    width: 40%;
+    border-radius: 3px;
+    background: #5865f2;
+    animation: uploadSlide 1.2s ease-in-out infinite;
+}
+
+@keyframes uploadSlide {
+    0% {
+        margin-left: -40%;
+    }
+    100% {
+        margin-left: 100%;
+    }
+}
+
+/* voice recording bar above the input */
+#voiceBar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #2f3136;
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin: 0 0 6px 15px;
+    width: calc(100% - 40px);
+    box-sizing: border-box;
+    font-size: 14px;
+    color: #fff;
+}
+
+.recDot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #ed4245;
+    flex-shrink: 0;
+    animation: recPulse 1s ease-in-out infinite;
+}
+
+@keyframes recPulse {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.35;
+    }
+}
+
+.recTimer {
+    color: #b9bbbe;
+    font-variant-numeric: tabular-nums;
+}
+
+.recStop {
+    margin-left: auto;
+    background: #5865f2;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.recCancel {
+    background: transparent;
+    color: #b9bbbe;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 8px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.recCancel:hover {
+    background: #393c42;
+    color: #fff;
+}
+
+/* ==================== guild rail spacing ==================== */
+
+#guild-list .guildIconDiv {
+    margin-bottom: 8px;
+}
+
 /* ==================== reactions ==================== */
 
 .reactions {
@@ -571,38 +744,62 @@
     color: #fff;
 }
 
-/* ==================== reply bar ==================== */
+/* ==================== reply quote ====================
+ * Discord-style: curved thread spine + tiny avatar + colored name + grey
+ * snippet on one slightly-dimmed line. */
 
 .replyBar {
     display: flex;
     align-items: center;
+    gap: 5px;
     font-size: 13px;
-    color: #b9bbbe;
+    line-height: 18px;
+    color: #949ba4;
     cursor: pointer;
-    margin: 2px 0 2px 0;
+    margin: 2px 0 3px 0;
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    min-width: 0;
 }
 
-.replyBar:hover {
-    color: #dcddde;
+.replyBar:hover .replySnippet {
+    color: #b9bbbe;
 }
 
-.replyArrow {
-    color: #72767d;
-    margin-right: 4px;
+/* thread spine: vertical from the avatar side, 90° curve into the quote */
+.replySpine {
+    flex-shrink: 0;
+    width: 22px;
+    height: 16px;
+    margin-left: 8px;
+    margin-bottom: -4px;
+    border-left: 2px solid #4f545c;
+    border-bottom: 2px solid #4f545c;
+    border-bottom-left-radius: 8px;
+}
+
+.replyAvatar {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
 }
 
 .replyAuthor {
+    flex-shrink: 0;
     font-weight: 600;
-    margin-right: 4px;
+    color: #c9cdfb;
 }
 
 .replySnippet {
-    color: #72767d;
+    color: #949ba4;
     overflow: hidden;
     text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.replySnippet.replyMediaOnly {
+    font-style: italic;
 }
 
 .replyFlash {

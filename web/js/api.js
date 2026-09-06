@@ -253,6 +253,41 @@ const Api = (() => {
             del(
                 `/api/channels/${cid}/messages/${mid}/reactions?emoji=${encodeURIComponent(emoji)}`
             ),
+        // Attachment / voice-message upload (multipart; longer budget).
+        sendFile: (cid, { file, content, reply_to, mention_author }) => {
+            const fd = new FormData();
+            fd.append('file', file, file.name);
+            if (content) fd.append('content', content);
+            if (reply_to) fd.append('reply_to', reply_to);
+            fd.append('mention_author', mention_author === false ? 'false' : 'true');
+            const headers = {};
+            if (password()) headers['X-Botcord-Password'] = password();
+            if (sessionId()) headers['X-Botcord-Session'] = sessionId();
+            const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+            let timer = null;
+            const opts = { method: 'POST', headers, body: fd };
+            if (ctrl) {
+                opts.signal = ctrl.signal;
+                timer = setTimeout(() => ctrl.abort(), 120000);
+            }
+            return fetch(base + `/api/channels/${cid}/messages`, opts)
+                .then(async (res) => {
+                    if (timer) clearTimeout(timer);
+                    let data = {};
+                    try {
+                        data = await res.json();
+                    } catch (e) {
+                        /* ignore */
+                    }
+                    if (!res.ok) throw { code: data.error || `HTTP-${res.status}`, status: res.status, data };
+                    return data;
+                })
+                .catch((e) => {
+                    if (timer) clearTimeout(timer);
+                    if (e && e.code) throw e;
+                    throw { code: e && e.name === 'AbortError' ? 'REQUEST-TIMEOUT' : 'CONNECTION-REFUSED', message: String(e) };
+                });
+        },
         typing: (cid) => post(`/api/channels/${cid}/typing`),
         createInvite: (cid) => post(`/api/channels/${cid}/invites`, {}),
         updateUsername: (username) => patch('/api/me', { username }),
