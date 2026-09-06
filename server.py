@@ -34,7 +34,7 @@ WEB_DIR = BASE_DIR / "web"
 # Bump whenever the REST/WS contract changes. The site checks this on
 # startup and tells the user to restart / hard-refresh on mismatch
 # instead of hanging on the loader forever.
-SERVER_VERSION = 5
+SERVER_VERSION = 9
 
 log = logging.getLogger("botcord")
 
@@ -391,6 +391,11 @@ class BotcordClient(discord.Client):
             presences=True,
             dm_typing=True,
             dm_messages=True,
+            # Non-privileged: without these the gateway never sends
+            # on_reaction_add/remove/clear, so the UI would never learn
+            # about reactions (no portal toggle needed for these).
+            guild_reactions=True,
+            dm_reactions=True,
         )
         super().__init__(intents=intents, chunk_guilds_at_startup=False)
         self.state = state
@@ -1140,6 +1145,24 @@ async def api_get_messages(request):
     return web.json_response({"messages": messages})
 
 
+@routes.get("/api/channels/{cid}/messages/{mid}")
+async def api_get_message(request):
+    """Authoritative single-message fetch (reactions/components state)."""
+    client = require_bot(request)
+    channel = get_text_channel(client, request.match_info["cid"])
+    try:
+        msg = await channel.fetch_message(int(request.match_info["mid"]))
+    except (ValueError, discord.NotFound):
+        return web.json_response({"error": "UNKNOWN-MESSAGE"}, status=404)
+    except discord.Forbidden:
+        return web.json_response({"error": "MISSING-ACCESS"}, status=403)
+    except discord.HTTPException as exc:
+        return web.json_response(
+            {"error": f"DISCORD-API-ERROR: {exc}"}, status=502
+        )
+    return web.json_response({"message": message_json(msg)})
+
+
 @routes.post("/api/channels/{cid}/messages")
 async def api_send_message(request):
     client = require_bot(request)
@@ -1162,9 +1185,38 @@ async def api_send_message(request):
             return web.json_response(
                 {"error": f"BAD-EMBED: {exc}"}, status=400
             )
+    # Discord-style reply: reply_to = message id in this channel.
+    # mention_author toggles whether the reply pings the original author.
+    reference = None
+    reply_to = (body.get("reply_to") or "") if isinstance(body, dict) else ""
+    try:
+        reply_to = str(reply_to).strip()
+    except Exception:
+        reply_to = ""
+    mention_author = True
+    if isinstance(body, dict) and "mention_author" in body:
+        mention_author = bool(body.get("mention_author"))
+    if reply_to:
+        try:
+            ref_msg = await channel.fetch_message(int(reply_to))
+        except (ValueError, discord.NotFound):
+            return web.json_response({"error": "UNKNOWN-MESSAGE"}, status=404)
+        except discord.Forbidden:
+            return web.json_response({"error": "MISSING-ACCESS"}, status=403)
+        except discord.HTTPException as exc:
+            return web.json_response(
+                {"error": f"DISCORD-API-ERROR: {exc}"}, status=502
+            )
+        try:
+            reference = ref_msg.to_reference(fail_if_not_exists=False)
+        except Exception:
+            reference = None
     try:
         msg = await channel.send(
-            content if content.strip() else None, embed=embed
+            content if content.strip() else None,
+            embed=embed,
+            reference=reference,
+            mention_author=mention_author,
         )
     except discord.Forbidden:
         return web.json_response({"error": "MISSING-PERMISSIONS"}, status=403)

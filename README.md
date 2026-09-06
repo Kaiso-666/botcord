@@ -85,7 +85,7 @@ Each logged-in session holds one Discord gateway connection, so size
 The UI is responsive: on screens ≤ 860 px wide the message view takes
 the full width and the channel/member lists become slide-over drawers
 (☰ and 👥 buttons in the server header, or tap the chat to dismiss).
-Message input, settings, the embed builder and menus all fit small
+Message input, the embed builder and menus all fit small
 screens, and long-press opens the context menus.
 
 ## Stuck on "Loading servers"?
@@ -115,6 +115,12 @@ silently. The usual causes:
 * Message history (100), grouped rendering, markdown / spoilers /
   code blocks / unicode + custom emoji, mentions, embeds, attachments
 * Sending, inline edit, delete, pin/unpin, purge (`/purge <n>`)
+* Instant sends: your message appears immediately, greyed out, and turns
+  normal once the server confirms it (red + click-to-retry on failure)
+* Discord-style shimmer skeletons while a channel's messages load
+* Replies: right-click → Reply, composer bar above the input with an
+  @ON/@OFF ping toggle, quoted preview on messages (click jumps to the
+  original when loaded)
 * Discord-style mentions: Shift+Click a name/avatar/member (or type `@`
   for autocomplete) — shows `@Name` pills, sends `<@id>` so it pings
 * Reactions: view, toggle by clicking, add via right-click → Add reaction
@@ -123,20 +129,20 @@ silently. The usual causes:
   bots can't press each other's components; link buttons open normally)
 * Realtime via WebSocket: new / edited / deleted messages, typing
   indicator, member join/leave, presence, guild add/remove
-* Member list (online/offline), user card
-* Settings panel: presence/activity, username change, token switch,
-  invite-URL generator (permission checkboxes), logout
+* Member list (online/offline), bottom bot status bar (avatar + name)
 * Embed builder (📄 icon next to the message box)
 * Slash commands: `/help /shrug /tableflip /unflip /lenny /ping
   /server /purge /eval` (eval runs locally in your browser only)
-* Right-click menus: copy content/ID/link, edit/delete/pin, copy user
+* Right-click menus: reply, copy content/ID/link, edit/delete/pin, copy user
   and channel IDs, create channel invite
 
 ## Known limitations vs the desktop app
 
 * Node **scripts** (`scripts/`) are not supported — they executed with
-  full bot access, which is unsafe to expose over HTTP. The Scripts and
-  Servers settings groups flash red (not implemented), like before.
+  full bot access, which is unsafe to expose over HTTP.
+* No settings panel in the UI: presence, username changes, token-switch,
+  invite generation and logout are still available over the REST API
+  (see below) for custom frontends, but have no buttons in the client.
 * No theme manager UI yet; you can still add a stylesheet link in
   `web/index.html` pointing at `/themes/your-theme.css`.
 * History loads the latest 100 messages per channel (same as the
@@ -165,7 +171,8 @@ stores it automatically); without it the API answers `NO-SESSION`.
 | GET | `/api/dms` | DM channels + recipients |
 | GET | `/api/emojis` | bot emoji list |
 | GET | `/api/channels/{id}/messages?limit&before&after` | messages, oldest first |
-| POST | `/api/channels/{id}/messages` | `{content?, embed?}` |
+| GET | `/api/channels/{id}/messages/{mid}` | single message (authoritative reactions/components state) |
+| POST | `/api/channels/{id}/messages` | `{content?, embed?, reply_to?, mention_author?}` |
 | PATCH | `/api/channels/{id}/messages/{mid}` | `{content}` |
 | DELETE | `/api/channels/{id}/messages/{mid}` | — |
 | POST | `/api/channels/{id}/bulk-delete` | `{count}` (purge) |
@@ -198,7 +205,7 @@ Errors are JSON `{error: "CODE"}` with codes like `EMPTY-TOKEN`,
 * `web/js/api.js` — REST + WebSocket client.
 * `web/js/format.js` — message markdown/mention formatting.
 * `web/js/embeds.js` — embed + attachment rendering.
-* `web/js/app.js` — all UI logic (lists, messages, settings, commands).
+* `web/js/app.js` — all UI logic (lists, messages, commands).
 * `web/js/vendor-converter.js` — emoji shortcut table (unchanged copy).
 * `css/web.css` — small web-only styles (status dot, modal, toast).
 * Legacy `css/`, `resources/`, `themes/` are served as-is, no duplication.

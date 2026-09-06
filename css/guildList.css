@@ -110,16 +110,23 @@ limitations under the License. */
     background-color: transparent;
     padding: 0 10px;
     font-weight: bold;
+    /* grow with the name instead of clipping it at a fixed width */
+    width: max-content;
+    max-width: min(260px, calc(100vw - 100px));
     /* transition-duration: 0.3s !important; */
 }
 
 .guildName {
     color: inherit;
     margin: 3px 4px 0;
-    display: inherit;
+    display: block;
     position: relative;
     font-size: 13px;
     line-height: 27px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 240px;
 }
 
 .guild-icon:hover + .guildNameContainer::before {

@@ -5,31 +5,31 @@
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Botcord Web</title>
         <!-- JS: order matters -->
-        <script src="/js/api.js?v=7" charset="utf-8"></script>
-        <script src="/js/vendor-converter.js?v=7" charset="utf-8"></script>
-        <script src="/js/format.js?v=7" charset="utf-8"></script>
-        <script src="/js/embeds.js?v=7" charset="utf-8"></script>
+        <script src="/js/api.js?v=11" charset="utf-8"></script>
+        <script src="/js/vendor-converter.js?v=11" charset="utf-8"></script>
+        <script src="/js/format.js?v=11" charset="utf-8"></script>
+        <script src="/js/embeds.js?v=11" charset="utf-8"></script>
         <script src="https://cdn.jsdelivr.net/npm/@twemoji/api/dist/twemoji.js"></script>
-        <script src="/js/app.js?v=7" charset="utf-8" defer></script>
+        <script src="/js/app.js?v=11" charset="utf-8" defer></script>
 
         <!-- CSS (reused from the desktop client) -->
-        <link rel="stylesheet" href="/css/fonts.css?v=7" />
-        <link rel="stylesheet" href="/css/master.css?v=7" />
-        <link rel="stylesheet" href="/css/titlebar.css?v=7" />
-        <link rel="stylesheet" href="/css/embeds.css?v=7" />
-        <link rel="stylesheet" href="/css/memberList.css?v=7" />
-        <link rel="stylesheet" href="/css/userSettings.css?v=7" />
-        <link rel="stylesheet" href="/css/textFormat.css?v=7" />
-        <link rel="stylesheet" href="/css/channelList.css?v=7" />
-        <link rel="stylesheet" href="/css/dmList.css?v=7" />
-        <link rel="stylesheet" href="/css/guildList.css?v=7" />
-        <link rel="stylesheet" href="/css/miscs.css?v=7" />
-        <link rel="stylesheet" href="/css/rcMenu.css?v=7" />
-        <link rel="stylesheet" href="/css/memberMenu.css?v=7" />
-        <link rel="stylesheet" href="/css/splashScreen.css?v=7" />
-        <link rel="stylesheet" href="/css/messageBar.css?v=7" />
-        <link rel="stylesheet" href="/css/web.css?v=7" />
-        <link rel="stylesheet" href="/css/modern.css?v=7" />
+        <link rel="stylesheet" href="/css/fonts.css?v=11" />
+        <link rel="stylesheet" href="/css/master.css?v=11" />
+        <link rel="stylesheet" href="/css/titlebar.css?v=11" />
+        <link rel="stylesheet" href="/css/embeds.css?v=11" />
+        <link rel="stylesheet" href="/css/memberList.css?v=11" />
+        <link rel="stylesheet" href="/css/userSettings.css?v=11" />
+        <link rel="stylesheet" href="/css/textFormat.css?v=11" />
+        <link rel="stylesheet" href="/css/channelList.css?v=11" />
+        <link rel="stylesheet" href="/css/dmList.css?v=11" />
+        <link rel="stylesheet" href="/css/guildList.css?v=11" />
+        <link rel="stylesheet" href="/css/miscs.css?v=11" />
+        <link rel="stylesheet" href="/css/rcMenu.css?v=11" />
+        <link rel="stylesheet" href="/css/memberMenu.css?v=11" />
+        <link rel="stylesheet" href="/css/splashScreen.css?v=11" />
+        <link rel="stylesheet" href="/css/messageBar.css?v=11" />
+        <link rel="stylesheet" href="/css/web.css?v=11" />
+        <link rel="stylesheet" href="/css/modern.css?v=11" />
         <link id="themeLink" rel="stylesheet" href="" />
     </head>
     <body>
@@ -140,7 +140,7 @@
                 <div id="channel-elements"></div>
             </div>
 
-            <!-- Pull up menu for settings -->
+            <!-- Bottom status bar: bot avatar + name (no settings panel) -->
             <div id="userSettings">
                 <div id="userCard">
                     <p id="userCardBot">BOT</p>
@@ -152,15 +152,7 @@
                     />
                     <p id="userCardName">User</p>
                     <p id="userCardDiscrim">#0000</p>
-                    <img
-                        id="userPullOutIcon"
-                        src="/resources/icons/pullOut.svg"
-                        alt="settings"
-                    />
                 </div>
-
-                <!-- All the user options will be loaded here -->
-                <div id="optionGroups"></div>
             </div>
 
             <div id="msgSpace">

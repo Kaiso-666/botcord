@@ -9,7 +9,7 @@
 
 // Must match SERVER_VERSION in server.py. Checked on startup so a stale
 // server or cached site fails with a clear message instead of hanging.
-const CLIENT_VERSION = 5;
+const CLIENT_VERSION = 9;
 
 const S = {
     me: null,
@@ -30,8 +30,9 @@ const S = {
     typingTimers: {}, // channelId -> {userId: {name, timeout}}
     lastTypingSent: 0,
     splash: true,
-    settingsOpen: false,
     latencyMs: null,
+    replyTo: null, // {id, channel_id, authorId, name, snippet} | null
+    replyMention: true, // ping the quoted author on reply (Discord default)
 };
 
 // Reject a promise that never settles, so the splash screen always either
@@ -390,6 +391,8 @@ function errorHandler(err) {
         'LOGIN-RATE-LIMITED': 'Too many login attempts — wait a few minutes and try again',
         'MISSING-ACCESS': "The bot can't view that channel. Check its roles and permissions",
         'MISSING-PERMISSIONS': "The bot doesn't have permission to do that",
+        'REACTION-FAILED': 'Could not add that reaction — check the emoji and try again',
+        'BAD-EMOJI': 'Pick an emoji first',
         'UNKNOWN-CHANNEL': 'That channel is no longer available — try another one',
         'UNKNOWN-GUILD': 'That server is no longer available — try another one',
         'MEMBER-FETCH-FAILED':
@@ -402,6 +405,7 @@ function errorHandler(err) {
     let msg = FRIENDLY[code];
     if (!msg) {
         if (code.startsWith('MISSING-PERMISSIONS')) msg = FRIENDLY['MISSING-PERMISSIONS'];
+        else if (code.startsWith('REACTION-FAILED')) msg = FRIENDLY['REACTION-FAILED'];
         else if (code.startsWith('DISCORD-API-ERROR')) msg = 'Discord API error — try again in a moment';
         else if (code === 'Cannot send messages to this user')
             msg = "This user has DMs disabled or blocked the bot";
@@ -524,32 +528,6 @@ async function doLogin(token, save) {
     S._pendingSave = false;
     clearSelectMember();
     await bootstrap();
-}
-
-async function logout() {
-    // invalidate any in-flight bootstrap/channel load so it can't hide the
-    // splash screen or render into the cleared UI after logout
-    S.bootSeq = (S.bootSeq || 0) + 1;
-    S.booting = false;
-    S.generating = false;
-    try {
-        await Api.logout();
-    } catch (e) {
-        /* ignore */
-    }
-    store.defaultToken = '';
-    S.me = null;
-    S.guilds = [];
-    S.guildId = null;
-    S.channel = null;
-    $('guildContainer') && $('guildContainer').remove();
-    $('channel-elements').innerHTML = '';
-    $('message-list').innerHTML = '';
-    $('memberBar').innerHTML = '';
-    updateUserCard();
-    setConn('closed', 'offline');
-    showSplash();
-    buildSplashToken();
 }
 
 /* ============================== bootstrap ================================ */
@@ -684,7 +662,6 @@ function renderGuildList() {
             const top = img.getBoundingClientRect().top;
             nameWrap.style.top = `${top + 3}px`;
         };
-        nameWrap.style.width = '51px';
     });
 }
 
@@ -1045,30 +1022,49 @@ function messageBlock(m) {
     return darkBG;
 }
 
-// Slim reply header, like Discord: jumps to the referenced message when it
-// is already loaded, otherwise stays hidden (no content fetch endpoint yet).
+// Text of a rendered node (innerText when laid out, else textContent).
+function nodeText(n) {
+    if (!n) return '';
+    try {
+        return n.innerText || n.textContent || '';
+    } catch (e) {
+        return '';
+    }
+}
+
+// Quoted reply header, like Discord: "↩ Alice snippet". Jumps to the
+// referenced message when it is loaded; otherwise shows a fetched preview
+// (cached) and says so on click.
 function renderReplyBar(m, parent) {
     const ref = m.reference;
     if (!ref || !ref.message_id) return;
-    const target = document.getElementById(ref.message_id);
-    if (!target) return;
-    let author = 'a message';
-    let snippet = '';
-    try {
-        const nameNode = target.querySelector('.messageUsername');
-        if (nameNode && nameNode.innerText) author = nameNode.innerText;
-        const textNode = target.querySelector('.messageText');
-        if (textNode && textNode.innerText) snippet = textNode.innerText.slice(0, 80);
-    } catch (e) {
-        /* ignore */
-    }
     const bar = el('div', 'replyBar');
     bar.title = 'Jump to replied message';
     bar.appendChild(el('span', 'replyArrow', '↩ '));
-    bar.appendChild(el('span', 'replyAuthor', author));
-    if (snippet) bar.appendChild(el('span', 'replySnippet', `  ${snippet}`));
-    bar.addEventListener('click', (e) => {
-        e.stopPropagation();
+    const authorEl = el('span', 'replyAuthor', '…');
+    const snippetEl = el('span', 'replySnippet', '');
+    bar.appendChild(authorEl);
+    bar.appendChild(snippetEl);
+    parent.appendChild(bar);
+
+    const fillSync = (name, snippet) => {
+        // construction-time: the bar isn't in the document yet, so fill
+        // unconditionally — it renders with the node on append.
+        authorEl.innerText = name || 'unknown';
+        snippetEl.innerText = snippet ? `  ${String(snippet).slice(0, 80)}` : '';
+    };
+    const fillAsync = (name, snippet) => {
+        // fetch-time: only touch the bar if it actually made it into the
+        // DOM and is still there (message may have been deleted already).
+        if (!bar.isConnected) return;
+        fillSync(name, snippet);
+    };
+    const jump = () => {
+        const target = document.getElementById(ref.message_id);
+        if (!target) {
+            toast('Original message is not loaded');
+            return;
+        }
         try {
             target.scrollIntoView({ block: 'center' });
             target.classList.add('replyFlash');
@@ -1076,8 +1072,47 @@ function renderReplyBar(m, parent) {
         } catch (err) {
             /* ignore */
         }
+    };
+    bar.addEventListener('click', (e) => {
+        e.stopPropagation();
+        jump();
     });
-    parent.appendChild(bar);
+
+    // 1. already in the DOM? read it directly.
+    try {
+        const target = document.getElementById(ref.message_id);
+        if (target) {
+            let author = 'a message';
+            let snippet = '';
+            const nameNode = target.querySelector('.messageUsername');
+            if (nodeText(nameNode)) author = nodeText(nameNode);
+            const textNode = target.querySelector('.messageText');
+            if (nodeText(textNode)) snippet = nodeText(textNode).slice(0, 80);
+            fillSync(author, snippet);
+            ReplyCache.set(String(ref.message_id), { name: author, snippet });
+            return;
+        }
+    } catch (e) {
+        /* fall through to fetch */
+    }
+    // 2. cached preview?
+    const cached = ReplyCache.get(String(ref.message_id));
+    if (cached) {
+        fillSync(cached.name, cached.snippet);
+        return;
+    }
+    // 3. fetch the original for a preview (author + snippet only).
+    fillSync('…', '');
+    Api.message(m.channel_id, ref.message_id)
+        .then((res) => {
+            if (!res || !res.message) throw new Error('no message');
+            const om = res.message;
+            const entry = { name: replyNameFor(om), snippet: replySnippetFor(om) };
+            if (ReplyCache.size > 200) ReplyCache.clear();
+            ReplyCache.set(String(ref.message_id), entry);
+            fillAsync(entry.name, entry.snippet);
+        })
+        .catch(() => fillAsync('deleted message', ''));
 }
 
 function addHeader(darkBG, m) {
@@ -1154,8 +1189,30 @@ function appendMessage(m, prev) {
     list.appendChild(div);
 }
 
-function renderMessages(messages) {
-    clearMessages();
+/* Discord-style loading skeletons: grey avatar + text bars with a shimmer
+ * sweep, shown while a channel's history loads. */
+function buildMessageSkeletons(n) {
+    const wrap = el('div', 'msgSkeletons');
+    const widths = [92, 64, 78, 45, 85, 58, 72, 50];
+    const total = Math.max(1, Math.min(n || 8, 12));
+    for (let i = 0; i < total; i++) {
+        const row = el('div', 'msgSkeleton');
+        row.appendChild(el('div', 'skAvatar'));
+        const body = el('div', 'skBody');
+        body.appendChild(el('div', 'skLine skName'));
+        const l1 = el('div', 'skLine');
+        l1.style.width = widths[i % widths.length] + '%';
+        const l2 = el('div', 'skLine');
+        l2.style.width = Math.max(18, widths[(i + 3) % widths.length] - 30) + '%';
+        body.appendChild(l1);
+        body.appendChild(l2);
+        row.appendChild(body);
+        wrap.appendChild(row);
+    }
+    return wrap;
+}
+
+function renderMessages(messages) {    clearMessages();
     let prev = null;
     messages.forEach((m, i) => {
         appendMessage(m, prev);
@@ -1229,19 +1286,29 @@ async function selectChannel(c, div, opts) {
         S.channelDiv = div || null;
         if (div) div.classList.remove('newMsg');
 
+        // drop optimistic sends from other channels (their history refresh
+        // or gateway echo covers them when you return)
+        try {
+            for (const [k, p] of PendingSends) {
+                if (String(p.channelId) !== String(S.channel.id)) PendingSends.delete(k);
+            }
+        } catch (e) {
+            /* ignore */
+        }
+
         $('msgbox').placeholder = S.channel.isDM
             ? `Message @${S.channel.name}`
             : `Message #${S.channel.name}`;
         hideMentionSuggest();
+        cancelReply();
         syncMentionBackdrop();
 
         renderTyping();
         clearMessages();
 
-        const dots = el('div', 'dot-bricks');
-        dots.id = 'loading-container';
-        dots.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)';
-        $('message-list').appendChild(dots);
+        const skel = buildMessageSkeletons(8);
+        skel.id = 'loading-container';
+        $('message-list').appendChild(skel);
 
         try {
             // make sure lookups know this DM user
@@ -1849,37 +1916,57 @@ function patchReactionEvent(d, kind) {
     }
 }
 
-async function toggleReaction(m, key) {
+// Rebuild the reactions row from an authoritative reaction list, so the UI
+// never depends solely on gateway timing after an add/remove.
+function syncReactionsRow(m, reactions) {
+    m.reactions = reactions || [];
     const node = document.getElementById(m.id);
-    const pill = node && node.querySelector(`[data-key="${CSS.escape(key)}"]`);
-    const adding = pill ? !pill.classList.contains('me') : true;
+    if (!node) return;
+    const old = node.querySelector(':scope > .reactions');
+    if (old) old.remove();
+    try {
+        renderReactions(m, node);
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+async function refreshReactions(m) {
+    try {
+        const res = await Api.message(m.channel_id, m.id);
+        if (res && res.message && Array.isArray(res.message.reactions)) {
+            syncReactionsRow(m, res.message.reactions);
+        }
+    } catch (e) {
+        /* gateway echo is the fallback; stay quiet */
+    }
+}
+
+async function toggleReaction(m, key) {
+    if (isPendingId(m.id)) {
+        toast('Still sending…');
+        return;
+    }
     let emoji = null;
     (m.reactions || []).forEach((r) => {
         if (r.key === key) emoji = reactionApiEmoji(r);
     });
-    if (!emoji && pill) {
+    if (!emoji) {
         // pill created from a WS event (no cached message): the key encodes
         // `name` (unicode) or `name:id` (custom) — rebuild the API form.
         emoji = /\d/.test(key) && key.includes(':') ? `<:${key}>` : key;
     }
     if (!emoji) return;
-    // optimistic flip; the gateway echo corrects the absolute count
+    const node = document.getElementById(m.id);
+    const pill = node && node.querySelector(`[data-key="${CSS.escape(key)}"]`);
+    const adding = pill ? !pill.classList.contains('me') : true;
     try {
-        if (adding) {
-            pill && pill.classList.add('me');
-            await Api.addReaction(m.channel_id, m.id, emoji);
-        } else {
-            pill && pill.classList.remove('me');
-            await Api.removeReaction(m.channel_id, m.id, emoji);
-        }
+        if (adding) await Api.addReaction(m.channel_id, m.id, emoji);
+        else await Api.removeReaction(m.channel_id, m.id, emoji);
+        // authoritative state first, gateway echo (now enabled via the
+        // reactions intent) keeps it correct afterwards
+        await refreshReactions(m);
     } catch (e) {
-        // revert the optimistic flip
-        try {
-            if (adding) pill && pill.classList.remove('me');
-            else pill && pill.classList.add('me');
-        } catch (err) {
-            /* ignore */
-        }
         errorHandler(e);
     }
 }
@@ -1887,6 +1974,7 @@ async function toggleReaction(m, key) {
 async function addReactionTo(m, emoji) {
     try {
         await Api.addReaction(m.channel_id, m.id, emoji);
+        await refreshReactions(m);
     } catch (e) {
         errorHandler(e);
     }
@@ -2157,6 +2245,121 @@ const HELP_MSG = [
     '`/eval <js>` - Execute JavaScript in your browser (local only).',
 ].join('\n');
 
+/* ==================== replies (Discord-style) ============================
+ * Right-click (or the Reply item) quotes a message: a composer bar above
+ * the input shows who you're replying to, with a ping ON/OFF toggle.
+ * Sends carry `reply_to` + `mention_author`, like the Discord client.
+ */
+
+// Snippet cache for quoted messages not currently in the DOM.
+const ReplyCache = new Map(); // mid -> {name, snippet}
+
+function replySnippetFor(m) {    const text = (m.content || '').trim();
+    if (text) return text.slice(0, 80);
+    if ((m.attachments || []).length) return '📎 attachment';
+    if ((m.embeds || []).length) return '📄 embed';
+    if ((m.components || []).length) return '▦ message';
+    return '(empty message)';
+}
+
+function replyNameFor(m) {
+    try {
+        const mem = m.member;
+        return (
+            (mem && (mem.display_name || mem.nick)) ||
+            m.author.global_name ||
+            m.author.username ||
+            'unknown'
+        );
+    } catch (e) {
+        return 'unknown';
+    }
+}
+
+function ensureReplyComposer() {
+    if ($('replyComposer')) return;
+    const sendmsg = $('sendmsg');
+    const bar = $('messageBar');
+    if (!sendmsg || !bar) return;
+    const c = document.createElement('div');
+    c.id = 'replyComposer';
+    c.className = 'hidden';
+    const label = el('span', 'replyComposerLabel', 'Replying to ');
+    const name = el('strong', 'replyComposerName', '');
+    name.id = 'replyComposerName';
+    const snippet = el('span', 'replyComposerSnippet', '');
+    snippet.id = 'replyComposerSnippet';
+    const ping = el('button', 'replyPingToggle pingOn', '@ON');
+    ping.id = 'replyPingToggle';
+    ping.title = 'Toggle whether the reply pings the author';
+    ping.addEventListener('click', (e) => {
+        e.preventDefault();
+        S.replyMention = !S.replyMention;
+        renderReplyComposer();
+    });
+    const x = el('button', 'replyCancel', '✕');
+    x.title = 'Cancel reply (Esc)';
+    x.addEventListener('click', (e) => {
+        e.preventDefault();
+        cancelReply();
+        $('msgbox') && $('msgbox').focus();
+    });
+    c.appendChild(label);
+    c.appendChild(name);
+    c.appendChild(snippet);
+    c.appendChild(ping);
+    c.appendChild(x);
+    sendmsg.insertBefore(c, bar);
+}
+
+function renderReplyComposer() {
+    ensureReplyComposer();
+    const c = $('replyComposer');
+    if (!c) return;
+    const r = S.replyTo;
+    if (!r) {
+        c.classList.add('hidden');
+        return;
+    }
+    c.classList.remove('hidden');
+    $('replyComposerName').innerText = r.name || 'unknown';
+    $('replyComposerSnippet').innerText = r.snippet ? `  ${r.snippet}` : '';
+    const ping = $('replyPingToggle');
+    ping.innerText = S.replyMention ? '@ON' : '@OFF';
+    ping.classList.toggle('pingOn', !!S.replyMention);
+    ping.classList.toggle('pingOff', !S.replyMention);
+}
+
+function startReply(m) {
+    if (!S.channel) {
+        toast('Select a channel first');
+        return;
+    }
+    if (isPendingId(m.id)) {
+        toast('Still sending…');
+        return;
+    }
+    S.replyTo = {
+        id: String(m.id),
+        channel_id: String(m.channel_id),
+        authorId: String(m.author.id),
+        name: replyNameFor(m),
+        snippet: replySnippetFor(m),
+    };
+    renderReplyComposer();
+    try {
+        $('msgbox').focus();
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+function cancelReply() {
+    if (!S.replyTo) return;
+    S.replyTo = null;
+    renderReplyComposer();
+}
+
 async function sendCurrent() {
     if (!S.channel) {
         toast('Select a channel first');
@@ -2261,22 +2464,143 @@ async function sendCurrent() {
     return false;
 }
 
-async function sendText(content, embed) {
+async function sendText(content, embed, opts) {
+    opts = opts || {};
     if (!S.channel) return;
     if (!content && !embed) return;
+    const channel = S.channel;
+    const r =
+        opts.replyTo !== undefined
+            ? opts.replyTo
+            : S.replyTo && S.replyTo.channel_id === channel.id
+              ? S.replyTo
+              : null;
+    const mention = opts.mention !== undefined ? opts.mention : S.replyMention;
+    // Instant local echo, greyed out until the server confirms it —
+    // this is what hides network latency, exactly like Discord.
+    const tempId = 'pending-' + Date.now().toString(36) + '-' + ++pendingSeq;
+    const temp = makePendingMessage(tempId, channel, content, embed, r);
+    PendingSends.set(tempId, {
+        content,
+        embed,
+        reply: r,
+        mention,
+        channelId: channel.id,
+        msg: temp,
+    });
+    handleIncomingMessage(temp);
+    const node = document.getElementById(tempId);
+    if (node) node.classList.add('pending');
+    // Discord clears the box the moment you hit enter, not on confirm.
+    $('msgbox').value = '';
+    syncMentionBackdrop();
+    const list = $('message-list');
+    list.scrollTop = list.scrollHeight;
     try {
-        const res = await Api.sendMessage(S.channel.id, content, embed || null);
+        const res = await Api.sendMessage(channel.id, content, embed || null, {
+            reply_to: r ? r.id : null,
+            mention_author: mention,
+        });
+        PendingSends.delete(tempId);
+        if (!S.channel || S.channel.id !== channel.id) return; // switched away; refresh covers it
+        removeMessageDom(tempId);
         if (res.message) {
-            // the WS echo will also arrive; upsert by id prevents duplicates
-            const list = $('message-list');
+            // the WS echo may already be here; upsert by id prevents duplicates
             handleIncomingMessage(res.message);
-            list.scrollTop = list.scrollHeight;
         }
-        $('msgbox').value = '';
-        syncMentionBackdrop();
+        if (r && S.replyTo && S.replyTo.id === r.id) cancelReply();
+        list.scrollTop = list.scrollHeight;
     } catch (e) {
+        if (S.channel && S.channel.id === channel.id) markSendFailed(tempId);
+        else {
+            PendingSends.delete(tempId);
+            removeMessageDom(tempId);
+        }
         errorHandler(e);
     }
+}
+
+/* ---- optimistic (client-sided) sends ---- */
+
+let pendingSeq = 0;
+const PendingSends = new Map(); // tempId -> {content, embed, reply, mention, channelId, msg}
+
+function isPendingId(id) {
+    return typeof id === 'string' && id.indexOf('pending-') === 0;
+}
+
+function makePendingMessage(tempId, channel, content, embed, reply) {
+    const me = S.me || {
+        id: 'me',
+        username: '?',
+        global_name: null,
+        discriminator: '0',
+        avatar: null,
+        bot: true,
+    };
+    return {
+        id: tempId,
+        channel_id: channel.id,
+        guild_id: channel.guild_id || null,
+        author: {
+            id: String(me.id),
+            username: me.username,
+            global_name: me.global_name,
+            discriminator: me.discriminator,
+            avatar: me.avatar,
+            bot: true,
+        },
+        member: null,
+        content: content || '',
+        clean_content: content || '',
+        mentions: { users: [], roles: [], channels: [] },
+        embeds: embed ? [embed] : [],
+        attachments: [],
+        reactions: [],
+        components: [],
+        flags: 0,
+        is_components_v2: false,
+        poll: null,
+        reference: reply
+            ? {
+                  message_id: String(reply.id),
+                  channel_id: String(channel.id),
+                  guild_id: channel.guild_id || null,
+              }
+            : null,
+        timestamp: new Date().toISOString(),
+        edited_timestamp: null,
+        pinned: false,
+        tts: false,
+        pending: true,
+        failed: false,
+    };
+}
+
+function markSendFailed(tempId) {
+    const p = PendingSends.get(tempId);
+    if (p && p.msg) p.msg.failed = true;
+    const node = document.getElementById(tempId);
+    if (!node) return;
+    node.classList.remove('pending');
+    node.classList.add('failed');
+    node.title = 'Not delivered — click to retry';
+    node.addEventListener('click', (ev) => {
+        if (ev.target && ev.target.closest && ev.target.closest('a')) return;
+        retrySend(tempId);
+    });
+}
+
+async function retrySend(tempId) {
+    const p = PendingSends.get(tempId);
+    if (!p) return;
+    if (!S.channel || String(S.channel.id) !== String(p.channelId)) {
+        toast('Switch back to that channel to retry');
+        return;
+    }
+    removeMessageDom(tempId);
+    PendingSends.delete(tempId);
+    await sendText(p.content, p.embed, { replyTo: p.reply, mention: p.mention });
 }
 
 /* ============================ incoming events ============================ */
@@ -2338,8 +2662,30 @@ function openRcMenu(x, y, items) {
 }
 
 function messageContextMenu(e, m) {
+    // Client-sided pending message: no server actions make sense yet.
+    if (isPendingId(m.id)) {
+        if (m.failed) {
+            openRcMenu(e.clientX, e.clientY, [
+                { label: 'Retry send', fn: () => retrySend(m.id) },
+                {
+                    label: 'Delete',
+                    danger: true,
+                    fn: () => {
+                        PendingSends.delete(m.id);
+                        removeMessageDom(m.id);
+                    },
+                },
+                { break: true },
+                { label: 'Copy content', fn: () => copyText(m.content || '', 'Message') },
+            ]);
+        } else {
+            toast('Still sending…');
+        }
+        return;
+    }
     const own = S.me && m.author.id === S.me.id;
     const items = [
+        { label: 'Reply', fn: () => startReply(m) },
         { label: 'Copy content', fn: () => copyText(m.content || '', 'Message') },
         { label: 'Copy message ID', fn: () => copyText(m.id, 'Message ID') },
         {
@@ -2426,268 +2772,6 @@ function inlineEdit(m) {
         }
     });
     ta.addEventListener('blur', () => updateMessageDom(m));
-}
-
-/* =========================== settings panel ============================== */
-
-const INVITE_PERMS = [
-    ['General Permissions', null],
-    ['Administrator', 8, false],
-    ['View Audit Log', 80, false],
-    ['Manage Server', 20, false],
-    ['Manage Roles', 10000000, false],
-    ['Manage Channels', 10, false],
-    ['Kick Members', 2, false],
-    ['Ban Members', 4, false],
-    ['Create Instant Invite', 1, true],
-    ['Change Nickname', 4000000, true],
-    ['Manage Nicknames', 8000000, false],
-    ['Manage Emojis', 40000000, false],
-    ['Manage Webhooks', 20000000, false],
-    ['View Channels', 400, true],
-    ['Text Permissions', null],
-    ['Send Messages', 800, true],
-    ['Send TTS Messages', 1000, false],
-    ['Manage Messages', 2000, false],
-    ['Embed Links', 4000, true],
-    ['Attach Files', 8000, false],
-    ['Read Message History', 10000, true],
-    ['Mention @everyone', 20000, false],
-    ['Use External Emojis', 40000, true],
-    ['Add Reactions', 40, true],
-    ['Voice Permissions', null],
-    ['Connect', 100000, true],
-    ['Mute Members', 400000, false],
-    ['Move Members', 1000000, false],
-    ['Speak', 200000, true],
-    ['Deafen Members', 800000, false],
-    ['Use Voice Activity', 2000000, false],
-    ['Priority Speaker', 100, false],
-];
-
-function toggleSettings() {
-    const card = $('userSettings');
-    card.classList.toggle('userSettingsToggle');
-    const icon = $('userPullOutIcon');
-    icon.classList.toggle('userSettingsFlip');
-    S.settingsOpen = !S.settingsOpen;
-    if (S.settingsOpen) closePopups();
-}
-
-function closePopups() {
-    document.querySelectorAll('#optionGroups .settingsPopup').forEach((n) => n.remove());
-    document.querySelectorAll('#optionGroups .optionCategory.toggledOn').forEach((n) => n.classList.remove('toggledOn'));
-}
-
-function buildSettingsMenu() {
-    const parent = $('optionGroups');
-    parent.innerHTML = '';
-    const center = el('center');
-    center.appendChild(el('h2', '', 'User Options'));
-    parent.appendChild(center);
-
-    const groups = [
-        { name: 'Presence', build: buildPresencePopup },
-        { name: 'User', build: buildUserPopup },
-        { name: 'Scripts', build: null },
-        { name: 'Servers', build: null },
-    ];
-    groups.forEach((gr) => {
-        const wrap = el('div', 'optionCategoryContainer');
-        const cat = el('div', 'optionCategory');
-        cat.appendChild(el('span', 'settingLabel', gr.name));
-        cat.addEventListener('click', () => {
-            if (!gr.build) {
-                try {
-                    cat.animate(animations.flashTextRed, { duration: 350 });
-                } catch (e) {
-                    /* ignore */
-                }
-                return;
-            }
-            const wasOpen = cat.classList.contains('toggledOn');
-            closePopups();
-            document.querySelectorAll('#optionGroups .optionCategory').forEach((c) => c.classList.remove('toggledOn'));
-            if (!wasOpen) {
-                cat.classList.add('toggledOn');
-                gr.build(wrap);
-            }
-        });
-        wrap.appendChild(cat);
-        parent.appendChild(wrap);
-    });
-}
-
-function popupShell(parent) {
-    const pop = el('div', 'settingsPopup');
-    parent.appendChild(pop);
-    return pop;
-}
-
-function optionBlock(pop, title, desc) {
-    const opt = el('div', 'option');
-    pop.appendChild(opt);
-    opt.appendChild(el('label', '', title));
-    if (desc) {
-        const d = el('p', 'description', desc);
-        opt.appendChild(d);
-    }
-    return opt;
-}
-
-function makeDropdown(parent, options, def) {
-    const dd = el('div', 'dropdown');
-    dd.tabIndex = 0;
-    const display = el('div', 'dropdownDisplay');
-    const title = el('span', 'dropDownTitle', options[def || 0]);
-    display.appendChild(title);
-    const icon = el('img', 'dropdownIcon');
-    icon.src = '/resources/icons/pullOut.svg';
-    display.appendChild(icon);
-    dd.appendChild(display);
-    const kids = el('div', 'dropdownChildren');
-    dd.appendChild(kids);
-    options.forEach((t, i) => {
-        const o = el('option', i === (def || 0) ? 'selectedOption' : '', t);
-        o.addEventListener('click', (ev) => {
-            ev.stopPropagation();
-            title.innerText = t;
-            kids.querySelectorAll('option').forEach((k) => k.classList.remove('selectedOption'));
-            o.classList.add('selectedOption');
-            dd.classList.remove('openDrop');
-            dd.dispatchEvent(new CustomEvent('change', { detail: t }));
-        });
-        kids.appendChild(o);
-    });
-    dd.addEventListener('click', () => dd.classList.toggle('openDrop'));
-    parent.appendChild(dd);
-    return { root: dd, value: () => title.innerText };
-}
-
-function makeInput(parent, placeholder, cls) {
-    const inp = document.createElement('input');
-    inp.placeholder = placeholder;
-    if (cls) inp.className = cls;
-    parent.appendChild(inp);
-    return inp;
-}
-
-function buildPresencePopup(parent) {
-    const pop = popupShell(parent);
-    const opt = optionBlock(
-        pop,
-        'Activity, Status & Message',
-        'Set the activity status for your bot. This may take a while to update if changed often.'
-    );
-    const status = makeDropdown(opt, ['Online', 'Idle', 'Do Not Disturb', 'Invisible'], 0);
-    const activity = makeDropdown(opt, ['None', 'Playing', 'Streaming', 'Listening', 'Watching', 'Competing'], 0);
-    const nameInp = makeInput(opt, 'Name of the game / action', 'activityInput');
-    const urlInp = makeInput(opt, 'URL of the stream', 'streamURLInput');
-    const btn = el('button', 'settingsUpdateBtn', 'Update');
-    btn.addEventListener('click', async () => {
-        const statusMap = { Online: 'online', Idle: 'idle', 'Do Not Disturb': 'dnd', Invisible: 'invisible' };
-        const actMap = { None: 'none', Playing: 'playing', Streaming: 'streaming', Listening: 'listening', Watching: 'watching', Competing: 'competing' };
-        try {
-            await Api.updatePresence({
-                status: statusMap[status.value()] || 'online',
-                activity_type: actMap[activity.value()] || 'none',
-                activity_name: nameInp.value,
-                stream_url: urlInp.value,
-            });
-            toast('Presence updated');
-        } catch (e) {
-            errorHandler(e);
-        }
-    });
-    opt.appendChild(btn);
-}
-
-function buildUserPopup(parent) {
-    const pop = popupShell(parent);
-
-    const nameOpt = optionBlock(pop, 'Display Information', 'Change things like your username. Personalize yourself!');
-    const nameInp = makeInput(nameOpt, 'New username', 'newNameInput');
-    const nameBtn = el('button', 'settingsUpdateBtn', 'Update');
-    nameBtn.addEventListener('click', async () => {
-        try {
-            const r = await Api.updateUsername(nameInp.value);
-            S.me = r.user;
-            updateUserCard();
-            toast('Username updated');
-        } catch (e) {
-            errorHandler(e);
-            try {
-                nameInp.animate(animations.flashRed, { duration: 500 });
-            } catch (err) {
-                /* ignore */
-            }
-        }
-    });
-    nameOpt.appendChild(nameBtn);
-    pop.appendChild(el('hr'));
-
-    const tokOpt = optionBlock(
-        pop,
-        'Switch Token',
-        'Log into a different bot account. Paste your token, press enter, or save it as default.'
-    );
-    const tokInp = makeInput(tokOpt, 'Input the token here', 'tokenbox');
-    tokInp.type = 'password';
-    tokInp.id = 'tokenbox';
-    tokInp.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') switchToken(tokInp.value, false);
-    });
-    const tokBtn = el('button', 'settingsUpdateBtn', 'Save as Default');
-    tokBtn.addEventListener('click', () => switchToken(tokInp.value, true));
-    tokOpt.appendChild(tokBtn);
-    pop.appendChild(el('hr'));
-
-    const invOpt = optionBlock(pop, 'Generate Invite', 'Select permissions, then copy the invite URL for your bot.');
-    INVITE_PERMS.forEach(([label, value, def]) => {
-        if (value === null) {
-            invOpt.appendChild(el('p', 'settingsSeparator', label));
-            return;
-        }
-        const cont = el('div', 'checkBoxContainer');
-        cont.appendChild(el('span', '', label));
-        const box = el('div', 'checkbox' + (def ? ' toggled' : ''));
-        box.id = `perm-${value}`;
-        const check = el('img');
-        check.src = '/resources/icons/checkmark.svg';
-        box.appendChild(check);
-        cont.appendChild(box);
-        cont.addEventListener('click', () => box.classList.toggle('toggled'));
-        invOpt.appendChild(cont);
-    });
-    const invBtn = el('button', 'settingsUpdateBtn', 'Copy');
-    invBtn.addEventListener('click', () => {
-        const sum = Array.from(invOpt.querySelectorAll('.checkbox.toggled')).reduce(
-            (a, b) => a + parseInt(b.id.replace('perm-', ''), 10),
-            0
-        );
-        if (!S.me) return;
-        copyText(
-            `https://discordapp.com/oauth2/authorize?client_id=${S.me.id}&scope=bot&permissions=${sum}`,
-            'Invite'
-        );
-    });
-    invOpt.appendChild(invBtn);
-    pop.appendChild(el('hr'));
-
-    const outOpt = optionBlock(pop, 'Session', 'Log out of the bot on this server.');
-    const outBtn = el('button', 'settingsUpdateBtn', 'Log out');
-    outBtn.addEventListener('click', logout);
-    outOpt.appendChild(outBtn);
-}
-
-async function switchToken(token, save) {
-    S.bootSeq = (S.bootSeq || 0) + 1;
-    S.booting = false;
-    S.generating = false;
-    showSplash();
-    setLoadingPerc(0.05);
-    clearSelectMember();
-    await doLogin(token, save);
 }
 
 /* ============================ embed builder ============================== */
@@ -2831,8 +2915,8 @@ function wireSocket() {
 
 function wireStaticUI() {
     ensureMsgWrap();
+    ensureReplyComposer();
     $('homeBtn').addEventListener('click', showDMHome);
-    $('userPullOutIcon').addEventListener('click', toggleSettings);
 
     // mobile drawers
     $('chanToggle').addEventListener('click', (e) => {
@@ -2901,6 +2985,7 @@ function wireStaticUI() {
             closeEmbedModal();
             hideMentionSuggest();
             closeEmojiPicker();
+            cancelReply();
         }
     });
     document.addEventListener('contextmenu', (e) => {
@@ -2912,7 +2997,6 @@ function wireStaticUI() {
 async function init() {
     wireStaticUI();
     wireSocket();
-    buildSettingsMenu();
     setConn('connecting', 'connecting');
 
     // Each browser gets a private session; the server scopes the bot

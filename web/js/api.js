@@ -239,7 +239,9 @@ const Api = (() => {
             if (opts && opts.after) q.set('after', opts.after);
             return get(`/api/channels/${cid}/messages?${q.toString()}`);
         },
-        sendMessage: (cid, content, embed) => post(`/api/channels/${cid}/messages`, { content, embed }),
+        message: (cid, mid) => get(`/api/channels/${cid}/messages/${mid}`),
+        sendMessage: (cid, content, embed, extra) =>
+            post(`/api/channels/${cid}/messages`, { content, embed, ...(extra || {}) }),
         editMessage: (cid, mid, content) => patch(`/api/channels/${cid}/messages/${mid}`, { content }),
         deleteMessage: (cid, mid) => del(`/api/channels/${cid}/messages/${mid}`),
         bulkDelete: (cid, count) => post(`/api/channels/${cid}/bulk-delete`, { count }),

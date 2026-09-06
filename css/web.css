@@ -234,6 +234,126 @@
     font-size: 12px;
 }
 
+/* ==================== message grid placement ====================
+ * modern.css turns .messageBlock into a 2-column grid (avatar | content).
+ * Every direct child therefore needs an explicit column, like .embed and
+ * .messageText already have — otherwise auto-placement drops V2 blocks,
+ * reactions and replies into sliver tracks where `overflow-wrap` shatters
+ * text character-per-line.
+ */
+
+.messageBlock > .replyBar,
+.messageBlock > .reactions,
+.messageBlock > .v2wrap,
+.messageBlock > .v2poll,
+.messageBlock > .previewImage,
+.messageBlock > video.previewImage,
+.messageBlock > audio {
+    grid-column: 2;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.messageBlock:not(.firstmsg) > .replyBar,
+.messageBlock:not(.firstmsg) > .reactions,
+.messageBlock:not(.firstmsg) > .v2wrap,
+.messageBlock:not(.firstmsg) > .v2poll,
+.messageBlock:not(.firstmsg) > .previewImage,
+.messageBlock:not(.firstmsg) > video.previewImage,
+.messageBlock:not(.firstmsg) > audio {
+    grid-column: 1;
+}
+
+/* ==================== optimistic sends ====================
+ * Client-sided echo: greyed out while the server confirms it (this is what
+ * hides latency), red + click-to-retry when delivery fails. */
+
+.messageBlock.pending .messageText {
+    color: #6d6f78;
+}
+
+.messageBlock.pending .embed,
+.messageBlock.pending .reactions,
+.messageBlock.pending .v2wrap {
+    opacity: 0.7;
+}
+
+.messageBlock.failed .messageText {
+    color: #ed4245;
+}
+
+.messageBlock.failed {
+    cursor: pointer;
+}
+
+/* ==================== loading skeletons ====================
+ * Discord-style channel placeholders: avatar + text bars with a shimmer
+ * sweep while history loads. */
+
+.msgSkeletons {
+    padding: 12px 16px 8px 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.msgSkeleton {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    column-gap: 12px;
+    align-items: start;
+}
+
+.skAvatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+}
+
+.skBody {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding-top: 3px;
+    min-width: 0;
+}
+
+.skLine {
+    height: 12px;
+    border-radius: 6px;
+}
+
+.skName {
+    width: 32%;
+    height: 11px;
+}
+
+.skAvatar,
+.skLine {
+    background: linear-gradient(90deg, #33363c 25%, #4b4e56 50%, #33363c 75%);
+    background-size: 200% 100%;
+    animation: skShimmer 1.4s linear infinite;
+}
+
+.msgSkeleton:nth-child(2n) .skAvatar,
+.msgSkeleton:nth-child(2n) .skLine {
+    animation-delay: -0.35s;
+}
+
+.msgSkeleton:nth-child(3n) .skAvatar,
+.msgSkeleton:nth-child(3n) .skLine {
+    animation-delay: -0.7s;
+}
+
+@keyframes skShimmer {
+    from {
+        background-position: 200% 0;
+    }
+    to {
+        background-position: -200% 0;
+    }
+}
+
 /* ==================== reactions ==================== */
 
 .reactions {
@@ -326,6 +446,77 @@
     margin: 4px 0;
 }
 
+/* ==================== reply composer (above input) ==================== */
+
+#replyComposer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #2f3136;
+    border-radius: 8px 8px 0 0;
+    padding: 6px 10px;
+    margin: 0 0 0 15px;
+    width: calc(100% - 40px);
+    box-sizing: border-box;
+    font-size: 13px;
+    color: #b9bbbe;
+    min-width: 0;
+}
+
+.replyComposerLabel {
+    flex-shrink: 0;
+}
+
+#replyComposerName {
+    color: #fff;
+    flex-shrink: 0;
+}
+
+#replyComposerSnippet {
+    color: #72767d;
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#replyPingToggle {
+    flex-shrink: 0;
+    border: none;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+#replyPingToggle.pingOn {
+    background: rgba(88, 101, 242, 0.35);
+    color: #c9cdfb;
+}
+
+#replyPingToggle.pingOff {
+    background: #4f545c;
+    color: #b9bbbe;
+}
+
+.replyCancel {
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    color: #b9bbbe;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.replyCancel:hover {
+    background: #393c42;
+    color: #fff;
+}
+
 /* ==================== reply bar ==================== */
 
 .replyBar {
@@ -373,6 +564,8 @@
     flex-direction: column;
     gap: 8px;
     margin: 4px 0;
+    width: 100%;
+    min-width: 0;
     max-width: 520px;
 }
 
@@ -397,11 +590,13 @@
     display: flex;
     gap: 12px;
     align-items: flex-start;
+    min-width: 0;
 }
 
 .v2section-text {
     flex: 1;
     min-width: 0;
+    max-width: 100%;
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -416,6 +611,9 @@
     color: #dcddde;
     font-size: 15px;
     word-wrap: break-word;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    min-width: 0;
 }
 
 .v2sep {
@@ -476,6 +674,9 @@
     cursor: pointer;
     color: #fff;
     text-decoration: none;
+    white-space: nowrap;
+    flex-shrink: 0;
+    max-width: 100%;
 }
 
 a.v2btn:hover {
