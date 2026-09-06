@@ -9,7 +9,7 @@
 
 // Must match SERVER_VERSION in server.py. Checked on startup so a stale
 // server or cached site fails with a clear message instead of hanging.
-const CLIENT_VERSION = 12;
+const CLIENT_VERSION = 14;
 
 const S = {
     me: null,
@@ -401,6 +401,9 @@ function errorHandler(err) {
             'Could not load members — the bot may need the Server Members intent',
         'NOT-LOGGED-IN': 'Session expired — please log in again',
         'NO-SESSION': 'Session expired — please log in again',
+        'CANNOT-DM': "Can't open a DM with them — DMs off or blocked",
+        'UNKNOWN-USER': 'User not found',
+        'BAD-USER': 'Pick a user first',
         SHARDING_REQUIRED: 'This bot needs sharding, which Botcord does not support',
         'EMPTY-NAME': 'Username is empty or contains invalid characters',
     };
@@ -948,6 +951,14 @@ function refreshLookup() {
         emojis[String(e.name).toLowerCase()] = e;
     });
     Fmt.setLookup({ members, roles, channels, emojis });
+    // guild data often arrives AFTER messages render: re-run the mention
+    // pass so @12345… pills pick up freshly cached names
+    try {
+        const list = document.getElementById('message-list');
+        if (list) scheduleResolve(list);
+    } catch (e) {
+        /* never break rendering */
+    }
 }
 
 function authorOf(m) {
@@ -1112,6 +1123,13 @@ function messageBlock(m) {
         renderReactions(m, darkBG);
     } catch (err) {
         console.error('reactions render failed', err);
+    }
+    // async mention pass: fills @12345… / #deleted-channel pills whose data
+    // arrived after (or before) this message rendered
+    try {
+        scheduleResolve(darkBG);
+    } catch (err) {
+        /* never break rendering */
     }
     if (!darkBG.children.length) {
         const text = el('p', 'messageText', '(empty message)');
@@ -1297,9 +1315,9 @@ function renderReplyBar(m, parent) {
         fillSync(cached);
         return;
     }
-    // 3. fetch the original for a preview.
+    // 3. fetch the original for a preview (other channels included).
     fillSync({ name: '…', snippet: '', avatar: null, color: null });
-    Api.message(m.channel_id, ref.message_id)
+    Api.message(ref.channel_id || m.channel_id, ref.message_id)
         .then((res) => {
             if (!res || !res.message) throw new Error('no message');
             const entry = quotePreviewFor(res.message);
@@ -1576,54 +1594,102 @@ function renderDMList() {
     const list = $('channel-elements');
     list.innerHTML = '';
 
-    const groups = [
-        { id: 'openDM', title: "Open DM's" },
-        { id: 'receivedDM', title: "Received DM's" },
-    ];
-    const containers = {};
-    groups.forEach((gr) => {
-        const category = el('div', 'category open');
-        category.id = gr.id;
-        list.appendChild(category);
-        const nameCat = el('div', 'categoryNameContainer');
-        category.appendChild(nameCat);
-        const svg = el('img', 'categorySVG');
-        svg.src = '/resources/icons/categoryArrow.svg';
-        nameCat.appendChild(svg);
-        nameCat.appendChild(el('h5', 'categoryText', gr.title));
-        const div = el('div', 'channelContainer');
-        category.appendChild(div);
-        nameCat.addEventListener('click', () => category.classList.toggle('open'));
-        containers[gr.id] = div;
-    });
+    const category = el('div', 'category open');
+    category.id = 'dmGroup';
+    list.appendChild(category);
+    const nameCat = el('div', 'categoryNameContainer');
+    category.appendChild(nameCat);
+    const svg = el('img', 'categorySVG');
+    svg.src = '/resources/icons/categoryArrow.svg';
+    nameCat.appendChild(svg);
+    nameCat.appendChild(el('h5', 'categoryText', 'Direct Messages'));
+    const div = el('div', 'channelContainer');
+    category.appendChild(div);
+    nameCat.addEventListener('click', () => category.classList.toggle('open'));
 
-    const sorted = [...S.dms]
-        .filter((d) => d.recipient && !d.recipient.bot)
-        .sort((a, b) => (a.recipient.username || '').localeCompare(b.recipient.username || ''));
+    const dmName = (d) => {
+        if (d.recipient) return d.recipient.global_name || d.recipient.username || '?';
+        const names = (d.recipients || []).map((u) => u.global_name || u.username || '?');
+        return names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3}` : '') || 'Group DM';
+    };
+    const sorted = [...(S.dms || [])].sort((a, b) =>
+        String(dmName(a)).localeCompare(String(dmName(b)))
+    );
     if (!sorted.length) {
-        containers.openDM.appendChild(el('h5', 'viewableText', 'No DMs yet — chat with a user from a server to open one.'));
+        div.appendChild(
+            el('h5', 'viewableText', 'No DMs yet — right-click any user and pick Message to start one.')
+        );
+        return;
     }
     sorted.forEach((d) => {
         const u = d.recipient;
         const row = el('div', 'dmChannel');
-        row.id = `dm-${u.id}`;
+        row.id = u ? `dm-${u.id}` : `dm-chan-${d.channel_id}`;
 
-        const img = el('img', 'dmChannelImage');
-        img.src = u.avatar || DEFAULT_AVATAR;
-        img.height = 25;
-        img.width = 25;
-        row.appendChild(img);
-        row.appendChild(el('h5', 'viewableText', u.username));
+        if (u) {
+            const img = el('img', 'dmChannelImage');
+            img.src = u.avatar || DEFAULT_AVATAR;
+            img.height = 25;
+            img.width = 25;
+            row.appendChild(img);
+            row.appendChild(el('h5', 'viewableText', u.global_name || u.username));
+            if (u.bot) {
+                const tag = el('span', 'dmBotTag', 'BOT');
+                row.appendChild(tag);
+            }
+            row.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                userContextMenu(e, u);
+            });
+        } else {
+            // group DM: no single recipient
+            const icon = el('div', 'dmGroupIcon', '👥');
+            row.appendChild(icon);
+            row.appendChild(el('h5', 'viewableText', dmName(d)));
+        }
 
         row.addEventListener('click', () => {
             const prev = list.querySelector('.selectedChan');
             if (prev && prev !== row) prev.classList.remove('selectedChan');
             if (prev === row) return;
             row.classList.add('selectedChan');
-            selectChannel({ id: d.channel_id, name: u.username, isDM: true, recipient: u }, row);
+            selectChannel(
+                { id: d.channel_id, name: dmName(d), isDM: true, recipient: u || null },
+                row
+            );
         });
-        containers.openDM.appendChild(row);
+        div.appendChild(row);
     });
+}
+
+// Open (or reuse) a DM with any user, then jump straight into it.
+async function openDMWith(userId) {
+    userId = String(userId);
+    try {
+        const r = await Api.createDM(userId);
+        try {
+            const d = await Api.dms();
+            S.dms = (d && d.dms) || S.dms;
+            refreshLookup();
+        } catch (e) {
+            /* list refresh is best-effort */
+        }
+        showDMHome();
+        const rec = r.recipient || null;
+        const row = (rec && $(`dm-${rec.id}`)) || $(`dm-chan-${r.channel_id}`);
+        selectChannel(
+            {
+                id: r.channel_id,
+                name: (rec && (rec.global_name || rec.username)) || 'DM',
+                isDM: true,
+                recipient: rec,
+            },
+            row
+        );
+    } catch (e) {
+        errorHandler(e);
+    }
 }
 
 /* =============================== member list ============================= */
@@ -1745,6 +1811,12 @@ function memberNameById(id) {
     if (S.owner && String(S.owner.id) === id) {
         return S.owner.global_name || S.owner.username;
     }
+    try {
+        const hit = ResolveCache.users[id];
+        if (hit && (hit.display || hit.username)) return hit.display || hit.username;
+    } catch (e) {
+        /* cache not ready yet */
+    }
     return id;
 }
 
@@ -1755,36 +1827,95 @@ function escHtml(s) {
         .replace(/>/g, '&gt;');
 }
 
-// Candidates for @ autocomplete: current guild members first, then the rest.
-function mentionCandidates() {
+// Completion engine: `@` lists members + roles + everyone/here, `#` lists
+// text channels. The popup hovers over the message bar and filters live.
+function userCompleteItems(q) {
     const seen = new Set();
-    const out = [];
-    const push = (u) => {
-        if (!u || seen.has(String(u.id))) return;
-        seen.add(String(u.id));
-        out.push(u);
+    const members = [];
+    const push = (id, name, username, avatar, bot) => {
+        id = id != null ? String(id) : '';
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        if (
+            !q ||
+            String(name || '').toLowerCase().includes(q) ||
+            String(username || '').toLowerCase().includes(q)
+        ) {
+            members.push({ type: 'member', id, name, username, avatar, bot });
+        }
     };
+    const byName = (a, b) =>
+        String(a.display_name || a.username || '').localeCompare(
+            String(b.display_name || b.username || '')
+        );
     const gid = S.guildId;
     if (gid && S.members[gid]) {
-        [...S.members[gid]]
-            .sort((a, b) =>
-                (a.display_name || a.username || '').localeCompare(
-                    b.display_name || b.username || ''
-                )
-            )
-            .forEach((m) =>
-                push({
-                    id: m.id,
-                    name: m.display_name || m.username,
-                    username: m.username,
-                    avatar: m.avatar,
-                    bot: m.bot,
-                })
-            );
+        [...S.members[gid]].sort(byName).forEach((m) =>
+            push(m.id, m.display_name || m.username, m.username, m.avatar, m.bot)
+        );
     }
-    (S.dms || []).forEach((d) => d.recipient && push(d.recipient));
-    if (S.me) push({ id: S.me.id, name: S.me.username, username: S.me.username, avatar: S.me.avatar });
-    return out;
+    Object.keys(S.members || {}).forEach((g) => {
+        if (String(g) === String(gid)) return;
+        [...(S.members[g] || [])].sort(byName).forEach((m) =>
+            push(m.id, m.display_name || m.username, m.username, m.avatar, m.bot)
+        );
+    });
+    (S.dms || []).forEach((d) => {
+        const u = d.recipient;
+        if (u) push(u.id, u.global_name || u.username, u.username, u.avatar, u.bot);
+    });
+    if (S.me) push(S.me.id, S.me.global_name || S.me.username, S.me.username, S.me.avatar, true);
+    const out = members.slice(0, 6);
+    if (gid) {
+        const roles = [...((S.roles || {})[gid] || [])].sort(
+            (a, b) => (b.position || 0) - (a.position || 0)
+        );
+        for (const r of roles) {
+            if (out.length >= 8) break;
+            if (String(r.name) === '@everyone') continue; // covered below
+            if (q && !String(r.name || '').toLowerCase().includes(q)) continue;
+            out.push({ type: 'role', id: String(r.id), name: r.name, color: r.color });
+        }
+        if (out.length < 8 && (!q || 'everyone'.includes(q))) {
+            out.push({ type: 'everyone', name: 'everyone', sub: 'Notify everyone in this channel' });
+        }
+        if (out.length < 8 && (!q || 'here'.includes(q))) {
+            out.push({ type: 'here', name: 'here', sub: 'Notify online members' });
+        }
+    }
+    return out.slice(0, 8);
+}
+
+function channelCompleteItems(q) {
+    const gid = S.guildId;
+    if (!gid || !S.channels[gid]) return [];
+    return (S.channels[gid] || [])
+        .filter((c) => {
+            try {
+                return isTextType(c.type);
+            } catch (e) {
+                return false;
+            }
+        })
+        .filter((c) => !q || String(c.name || '').toLowerCase().includes(q))
+        .slice(0, 8)
+        .map((c) => ({ type: 'channel', id: String(c.id), name: c.name, topic: c.topic || '' }));
+}
+
+// Detect an @ / # trigger right before the caret. Channels only make sense
+// inside a guild; in DMs there is nothing to complete with #.
+function detectComplete() {
+    const box = $('msgbox');
+    if (!box || !S.channel) return null;
+    const pos = box.selectionStart != null ? box.selectionStart : box.value.length;
+    const before = box.value.slice(0, pos);
+    let m = before.match(/(^|\s)@([\p{L}\p{N}_.]{0,32})$/u);
+    if (m) return { kind: 'user', query: m[2].toLowerCase(), start: pos - m[2].length - 1 };
+    if (S.guildId && S.channel && !S.channel.isDM) {
+        m = before.match(/(^|\s)#([\p{L}\p{N}_-]{0,32})$/u);
+        if (m) return { kind: 'channel', query: m[2].toLowerCase(), start: pos - m[2].length - 1 };
+    }
+    return null;
 }
 
 function insertMention(userId) {
@@ -1844,10 +1975,15 @@ function syncMentionBackdrop() {
         bd.innerHTML = '';
         return;
     }
-    // Tokenize raw <@id> / <@!id> / <#id> / <@&id>; pills show @Name.
-    const parts = raw.split(/(<@!?\d+>|<#\d+>|<@&\d+>)/g);
+    // Tokenize raw <@id> / <@!id> / <#id> / <@&id> / @everyone / @here;
+    // pills show @Name.
+    const parts = raw.split(/(<@!?\d+>|<#\d+>|<@&\d+>|@everyone|@here)/g);
     let html = '';
     for (const p of parts) {
+        if (p === '@everyone' || p === '@here') {
+            html += `<span class="msgMentionPill">${p}</span>`;
+            continue;
+        }
         let mm = p.match(/^<@!?(\d+)>$/);
         if (mm) {
             html += `<span class="msgMentionPill">@${escHtml(memberNameById(mm[1]))}</span>`;
@@ -1874,16 +2010,38 @@ function syncMentionBackdrop() {
     bd.scrollLeft = box.scrollLeft;
 }
 
-/* ---- @ autocomplete popup ---- */
+/* ---- @ / # autocomplete popup (over the message bar) ---- */
 
-const MentionSuggest = { open: false, items: [], active: 0 };
+const MentionSuggest = { open: false, items: [], active: 0, kind: null, start: 0 };
 
 function hideMentionSuggest() {
     MentionSuggest.open = false;
     MentionSuggest.items = [];
     MentionSuggest.active = 0;
+    MentionSuggest.kind = null;
     const s = $('mentionSuggest');
     if (s) s.classList.add('hidden');
+}
+
+function suggestRowIcon(it) {
+    if (it.type === 'member') {
+        const img = el('img', 'mentionAvatar');
+        img.src = it.avatar || DEFAULT_AVATAR;
+        return img;
+    }
+    const badge = el('div', 'mentionGlyph');
+    if (it.type === 'channel') {
+        badge.innerText = '#';
+        badge.classList.add('glyphChan');
+    } else if (it.type === 'role') {
+        const dot = el('span', 'roleDot');
+        dot.style.background = it.color || '#99aab5';
+        badge.appendChild(dot);
+    } else {
+        badge.innerText = '@';
+        badge.classList.add('glyphAt');
+    }
+    return badge;
 }
 
 function updateMentionSuggest() {
@@ -1893,42 +2051,46 @@ function updateMentionSuggest() {
         hideMentionSuggest();
         return false;
     }
-    const pos = box.selectionStart != null ? box.selectionStart : box.value.length;
-    const before = box.value.slice(0, pos);
-    const at = before.match(/(^|\s)@([\p{L}\p{N}_.]{0,32})$/u);
-    if (!at) {
+    const det = detectComplete();
+    if (!det) {
         hideMentionSuggest();
         return false;
     }
-    const q = at[2].toLowerCase();
-    const items = mentionCandidates()
-        .filter(
-            (u) =>
-                !q ||
-                (u.name || '').toLowerCase().includes(q) ||
-                (u.username || '').toLowerCase().includes(q)
-        )
-        .slice(0, 8);
+    const items =
+        det.kind === 'channel' ? channelCompleteItems(det.query) : userCompleteItems(det.query);
     if (!items.length) {
         hideMentionSuggest();
         return false;
     }
     MentionSuggest.open = true;
     MentionSuggest.items = items;
+    MentionSuggest.kind = det.kind;
+    MentionSuggest.start = det.start;
     MentionSuggest.active = Math.min(MentionSuggest.active, items.length - 1);
     sug.innerHTML = '';
-    items.forEach((u, i) => {
+    items.forEach((it, i) => {
         const row = el('div', 'mentionRow' + (i === MentionSuggest.active ? ' active' : ''));
-        const img = el('img', 'mentionAvatar');
-        img.src = u.avatar || DEFAULT_AVATAR;
-        row.appendChild(img);
+        row.appendChild(suggestRowIcon(it));
         const tx = el('div', 'mentionTexts');
-        tx.appendChild(el('div', 'mentionName', u.name || u.username || '?'));
-        if (u.username && u.username !== u.name) {
-            tx.appendChild(el('div', 'mentionSub', u.username + (u.bot ? ' • BOT' : '')));
-        } else if (u.bot) {
-            tx.appendChild(el('div', 'mentionSub', 'BOT'));
+        const nameRow = el('div', 'mentionName', (it.type === 'channel' ? '#' : it.type === 'member' ? '' : '@') + (it.name || '?'));
+        if (it.type === 'role' && it.color) {
+            try {
+                nameRow.style.color = it.color;
+            } catch (e) {
+                /* ignore */
+            }
         }
+        tx.appendChild(nameRow);
+        let sub = it.sub || '';
+        if (it.type === 'member') {
+            if (it.username && it.username !== it.name) sub = it.username + (it.bot ? ' • BOT' : '');
+            else if (it.bot) sub = 'BOT';
+        } else if (it.type === 'role') {
+            sub = 'ROLE';
+        } else if (it.type === 'channel' && it.topic) {
+            sub = String(it.topic).slice(0, 60);
+        }
+        if (sub) tx.appendChild(el('div', 'mentionSub', sub));
         row.appendChild(tx);
         row.addEventListener('mousedown', (e) => {
             // mousedown: beats the textarea blur that would close the list
@@ -1942,22 +2104,31 @@ function updateMentionSuggest() {
 }
 
 function pickMention(i) {
-    const u = MentionSuggest.items[i != null ? i : MentionSuggest.active];
-    if (!u) {
+    const it = MentionSuggest.items[i != null ? i : MentionSuggest.active];
+    if (!it) {
         hideMentionSuggest();
         return;
     }
     const box = $('msgbox');
-    const pos = box.selectionStart != null ? box.selectionStart : box.value.length;
-    const before = box.value.slice(0, pos);
-    const at = before.match(/(^|\s)@([\p{L}\p{N}_.]{0,32})$/u);
-    if (!at) {
+    if (!box) {
         hideMentionSuggest();
         return;
     }
-    const cutFrom = pos - at[2].length - 1; // include the '@'
-    box.value = `${box.value.slice(0, cutFrom)}<@${u.id}> ${box.value.slice(pos).replace(/^\s/, '')}`;
-    const npos = cutFrom + `<@${u.id}> `.length;
+    const pos = box.selectionStart != null ? box.selectionStart : box.value.length;
+    const det = detectComplete();
+    // the trigger must still be the one the list was built for
+    if (!det || det.kind !== MentionSuggest.kind || det.start !== MentionSuggest.start) {
+        hideMentionSuggest();
+        return;
+    }
+    let tag;
+    if (it.type === 'channel') tag = `<#${it.id}>`;
+    else if (it.type === 'role') tag = `<@&${it.id}>`;
+    else if (it.type === 'everyone') tag = '@everyone';
+    else if (it.type === 'here') tag = '@here';
+    else tag = `<@${it.id}>`;
+    box.value = `${box.value.slice(0, det.start)}${tag} ${box.value.slice(pos).replace(/^\s/, '')}`;
+    const npos = det.start + `${tag} `.length;
     try {
         box.focus();
         box.setSelectionRange(npos, npos);
@@ -1967,7 +2138,6 @@ function pickMention(i) {
     hideMentionSuggest();
     syncMentionBackdrop();
 }
-
 // Returns true when the key was consumed by the autocomplete list.
 function mentionSuggestKey(e) {
     if (!MentionSuggest.open) return false;
@@ -1993,6 +2163,147 @@ function mentionSuggestKey(e) {
         e.preventDefault();
         hideMentionSuggest();
         return true;
+    }
+    return false;
+}
+
+/* ============ async mention resolution (no more @12345…) ============
+ * Anything rendered before its data arrived — history from before login,
+ * members not chunked yet — gets tagged data-uid/cid/rid pills. This pass
+ * fills them in: local caches first (members often load AFTER messages),
+ * one batched /api/resolve per paint otherwise.
+ */
+
+const ResolveCache = { users: {}, channels: {}, roles: {} };
+let resolveTimer = null;
+const resolveRoots = new Set();
+
+function scheduleResolve(root) {
+    try {
+        if (root) resolveRoots.add(root);
+        if (resolveTimer) return;
+        resolveTimer = setTimeout(() => {
+            resolveTimer = null;
+            const roots = [...resolveRoots];
+            resolveRoots.clear();
+            flushResolve(roots).catch(() => {});
+        }, 60);
+    } catch (e) {
+        /* never break rendering */
+    }
+}
+
+async function flushResolve(roots) {
+    const spans = [];
+    (roots || []).forEach((root) => {
+        if (!root || !root.isConnected) return;
+        try {
+            root.querySelectorAll('[data-uid],[data-cid],[data-rid]').forEach((s) => {
+                if (!s.isConnected || s.classList.contains('resolved')) return;
+                spans.push(s);
+            });
+        } catch (e) {
+            /* ignore */
+        }
+    });
+    if (!spans.length) return;
+    // 1. paint everything the local caches already know
+    const pending = { users: new Set(), channels: new Set(), roles: new Set() };
+    spans.forEach((s) => {
+        if (paintResolvedSpan(s)) return;
+        if (s.dataset.uid) pending.users.add(s.dataset.uid);
+        else if (s.dataset.cid) pending.channels.add(s.dataset.cid);
+        else if (s.dataset.rid) pending.roles.add(s.dataset.rid);
+    });
+    const needU = [...pending.users].filter((id) => !ResolveCache.users[id]).slice(0, 25);
+    const needC = [...pending.channels].filter((id) => !ResolveCache.channels[id]).slice(0, 25);
+    const needR = [...pending.roles].filter((id) => !ResolveCache.roles[id]).slice(0, 25);
+    if (needU.length || needC.length || needR.length) {
+        try {
+            const data = await Api.resolve(needU, needC, needR);
+            try {
+                Object.assign(ResolveCache.users, (data && data.users) || {});
+                Object.assign(ResolveCache.channels, (data && data.channels) || {});
+                Object.assign(ResolveCache.roles, (data && data.roles) || {});
+            } catch (e) {
+                /* ignore */
+            }
+        } catch (e) {
+            return; // keep @id rather than break anything
+        }
+    }
+    spans.forEach((s) => {
+        if (s.isConnected) paintResolvedSpan(s);
+    });
+}
+
+// Paint one pill from the caches. True when fully resolved.
+function paintResolvedSpan(s) {
+    try {
+        if (s.dataset.uid) {
+            const id = String(s.dataset.uid);
+            const local = memberNameById(id);
+            if (local !== id) {
+                s.innerText = '@' + local;
+                s.classList.remove('ping-unknown');
+                s.classList.add('resolved');
+                return true;
+            }
+            const hit = ResolveCache.users[id];
+            if (hit && (hit.display || hit.username)) {
+                s.innerText = '@' + (hit.display || hit.username);
+                s.classList.remove('ping-unknown');
+                s.classList.add('resolved');
+                return true;
+            }
+            return false;
+        }
+        if (s.dataset.cid) {
+            const id = String(s.dataset.cid);
+            const name =
+                (Fmt && Fmt.chanName && Fmt.chanName(id)) ||
+                ((ResolveCache.channels[id] || {}).name || null);
+            if (name) {
+                s.innerText = '#' + name;
+                s.classList.remove('ping-unknown');
+                s.classList.add('resolved');
+                return true;
+            }
+            return false;
+        }
+        if (s.dataset.rid) {
+            const id = String(s.dataset.rid);
+            let hit = null;
+            try {
+                const pools = Object.values(S.roles || {});
+                for (const arr of pools) {
+                    const f = (arr || []).find((x) => String(x.id) === id);
+                    if (f) {
+                        hit = f;
+                        break;
+                    }
+                }
+            } catch (e) {
+                hit = null;
+            }
+            hit = hit || ResolveCache.roles[id];
+            if (hit && hit.name) {
+                s.innerText = '@' + hit.name;
+                if (hit.color) {
+                    try {
+                        s.style.color = hit.color;
+                    } catch (e) {
+                        /* ignore */
+                    }
+                }
+                s.classList.remove('ping-unknown');
+                s.classList.add('resolved');
+                return true;
+            }
+            return false;
+        }
+    } catch (e) {
+        /* ignore */
     }
     return false;
 }
@@ -2408,7 +2719,13 @@ function renderPoll(m, parent, isDM) {
     const answers = poll.answers || poll.results || [];
     if (!q && !answers.length) return;
     const box = el('div', 'v2poll');
-    box.appendChild(el('div', 'v2poll-q', `📊 ${q || 'Poll'}`));
+    const qEl = el('div', 'v2poll-q');
+    try {
+        qEl.innerHTML = `📊 ${Fmt.parseMessage(String(q || 'Poll'), m, { isDM })}`;
+    } catch (e) {
+        qEl.innerText = `📊 ${q || 'Poll'}`;
+    }
+    box.appendChild(qEl);
     answers.slice(0, 10).forEach((a) => {
         const media = a.poll_media || a.media || a;
         const text = (media && (media.text || media.question)) || a.text || '';
@@ -2714,6 +3031,33 @@ async function sendText(content, embed, opts) {
     }
 }
 
+/* Drop custom art at resources/icons/{attach,emoji,voice}.svg (or .png,
+ * 24px viewBox ideal) and the composer picks it up automatically —
+ * otherwise the built-in text glyphs (+ / 😀 / 🎤) are used. */
+function setCompIcon(btn, base, fallbackText) {
+    btn.innerText = fallbackText;
+    const chain = [`/resources/icons/${base}.svg`, `/resources/icons/${base}.png`];
+    const attempt = (i) => {
+        if (i >= chain.length) return; // keep the glyph fallback
+        const img = new Image();
+        img.onload = () => {
+            if (!btn.isConnected) return;
+            btn.innerHTML = '';
+            img.className = 'compIconImg';
+            img.alt = btn.title || base;
+            img.draggable = false;
+            btn.appendChild(img);
+        };
+        img.onerror = () => attempt(i + 1);
+        img.src = chain[i];
+    };
+    try {
+        attempt(0);
+    } catch (e) {
+        /* keep fallback */
+    }
+}
+
 /* ============ composer: attachments, voice, emoji (Discord-style) ======
  * [+] on the left uploads a file, [🎤] records a voice message, [😀]
  * opens an emoji picker — all wired into the same optimistic pipeline.
@@ -2747,7 +3091,7 @@ function ensureComposerButtons() {
         plus.id = 'attachBtn';
         plus.type = 'button';
         plus.title = 'Attach a file';
-        plus.innerText = '+';
+        setCompIcon(plus, 'attach', '+');
         plus.addEventListener('click', () => {
             if (!S.channel) {
                 toast('Select a channel first');
@@ -2779,7 +3123,7 @@ function ensureComposerButtons() {
         emoji.type = 'button';
         emoji.className = 'compIconBtn';
         emoji.title = 'Emoji';
-        emoji.innerText = '😀';
+        setCompIcon(emoji, 'emoji', '😀');
         emoji.addEventListener('click', (e) => {
             e.stopPropagation();
             toggleComposerEmoji(emoji);
@@ -2789,7 +3133,7 @@ function ensureComposerButtons() {
         voice.type = 'button';
         voice.className = 'compIconBtn';
         voice.title = 'Record a voice message';
-        voice.innerText = '🎤';
+        setCompIcon(voice, 'voice', '🎤');
         voice.addEventListener('click', (e) => {
             e.stopPropagation();
             toggleVoice();
@@ -3280,6 +3624,7 @@ function messageContextMenu(e, m) {
 
 function userContextMenu(e, u) {
     openRcMenu(e.clientX, e.clientY, [
+        { label: `Message @${u.global_name || u.username || u.id}`, fn: () => openDMWith(u.id) },
         { label: `Mention @${u.username || u.global_name || u.id}`, fn: () => insertMention(u.id) },
         { label: `Copy user ID (${u.id})`, fn: () => copyText(String(u.id), 'User ID') },
         ...(u.avatar ? [{ label: 'Copy avatar URL', fn: () => copyText(u.avatar, 'Avatar URL') }] : []),

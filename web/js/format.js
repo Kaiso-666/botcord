@@ -42,44 +42,65 @@ const Fmt = (() => {
         return text;
     }
 
-    function parseStyling(text, embed) {
-        let code = false;
+    // Code spans/blocks are stashed before any other formatting runs, so
+    // markdown, links and emoji never leak inside them — and formatting
+    // always applies OUTSIDE them (one backtick used to disable styling
+    // for the whole message). Restore with restoreCodeSpans() last.
+    function stashCodeSpans(text, embed) {
+        const stash = [];
+        const put = (html) => {
+            stash.push(html);
+            return `\u0000${stash.length - 1}\u0000`;
+        };
         text = text.replace(
             /(?<!\\)\`\`\`([^\n]+)\n?(.*?)(?:\n)?(?=\`\`\`)\`\`\`/gs,
             (a, b, c) => {
-                code = true;
                 c = c.length ? c : b;
-                return `<div class="codeBlock${
-                    embed ? ' codeBlockEmbed' : ''
-                } ${b}">${c}</div>`;
+                return put(
+                    `<div class="codeBlock${
+                        embed ? ' codeBlockEmbed' : ''
+                    } ${b}">${c}</div>`
+                );
             }
         );
-        text = text.replace(/(?<!\\)`(.*?)`/gm, (a, b) => {
-            if (code) return a;
-            code = true;
-            return `<span class="inlineCodeBlock">${b}</span>`;
-        });
+        text = text.replace(/(?<!\\)`(.*?)`/gm, (a, b) =>
+            put(`<span class="inlineCodeBlock">${b}</span>`)
+        );
+        return { text, stash };
+    }
 
-        if (code == false) {
-            text = text.replace(
-                /(?<!\\)\*\*\*(.+?)(?<!\\)\*\*\*/gm,
-                '<strong><i>$1<i></strong>'
-            );
-            text = text.replace(
-                /(?<!\\)\*\*(.+?)(?<!\\)\*\*/gm,
-                '<strong>$1</strong>'
-            );
-            text = text.replace(/(?<!\\)__(.+?)(?<!\\)__/gm, '<u>$1</u>');
-            text = text.replace(/(?<!\\)_(.+?)(?<!\\)_/gm, '<i>$1</i>');
-            text = text.replace(/(?<!\\)\*(.+?)(?<!\\)\*/gm, '<i>$1</i>');
-            text = text.replace(
-                /(?<!\\)\|\|(.+?)\|\|(?<!\\)/gm,
-                '<span class="spoilerBlock" onclick="discoverSpoiler(this)">$1</span>'
-            );
-            text = text.replace(/(?<!\\)\~(.+?)(?<!\\)\~/gm, '<del>$1</del>');
-        }
+    function restoreCodeSpans(text, stash) {
+        if (!stash || !stash.length) return text;
+        return text.replace(/\u0000(\d+)\u0000/g, (a, i) =>
+            stash[+i] !== undefined ? stash[+i] : a
+        );
+    }
 
+    function styleMarkdown(text) {
+        text = text.replace(
+            /(?<!\\)\*\*\*(.+?)(?<!\\)\*\*\*/gm,
+            '<strong><i>$1<i></strong>'
+        );
+        text = text.replace(
+            /(?<!\\)\*\*(.+?)(?<!\\)\*\*/gm,
+            '<strong>$1</strong>'
+        );
+        text = text.replace(/(?<!\\)__(.+?)(?<!\\)__/gm, '<u>$1</u>');
+        text = text.replace(/(?<!\\)_(.+?)(?<!\\)_/gm, '<i>$1</i>');
+        text = text.replace(/(?<!\\)\*(.+?)(?<!\\)\*/gm, '<i>$1</i>');
+        text = text.replace(
+            /(?<!\\)\|\|(.+?)\|\|(?<!\\)/gm,
+            '<span class="spoilerBlock" onclick="discoverSpoiler(this)">$1</span>'
+        );
+        text = text.replace(/(?<!\\)\~(.+?)(?<!\\)\~/gm, '<del>$1</del>');
         return text;
+    }
+
+    function parseStyling(text, embed) {
+        // Standalone entry point (kept for compatibility): code spans are
+        // protected while the rest of the markdown always applies.
+        const stashed = stashCodeSpans(text, embed);
+        return restoreCodeSpans(styleMarkdown(stashed.text), stashed.stash);
     }
 
     function parseUnicodeEmojis(text) {
@@ -130,6 +151,11 @@ const Fmt = (() => {
     // the message's mention lists + cached guild data.
     function formatPings(msg, text, isDM) {
         let textContent = text;
+        // @everyone / @here light up like any other ping
+        textContent = textContent.replace(
+            /(^|\s)(@(everyone|here))(?=[\s<.,!?;:]|$)/gm,
+            (a, pre, tag) => `${pre}<span class="ping">${tag}</span>`
+        );
         const keys = []; // [name, id, kind]
         const mentions = (msg && msg.mentions) || { users: [], roles: [], channels: [] };
 
@@ -164,61 +190,65 @@ const Fmt = (() => {
                 textContent = textContent.replace(channelRegex, (a, b, c) =>
                     b == '<' || b == '>'
                         ? a
-                        : `<span class="ping ${id}">#${c.replace(/\*/g, '&#42')}</span>`
+                        : `<span class="ping ${id}" data-cid="${id}">#${c.replace(/\*/g, '&#42')}</span>`
                 );
             } else {
                 const pingRegex = new RegExp(`(?:(<|>)?@!?(${name}))`, 'g');
+                const dataAttr = kind === 'role' ? ` data-rid="${id}"` : ` data-uid="${id}"`;
                 textContent = textContent.replace(pingRegex, (a, b, c) =>
                     b == '<' || b == '>'
                         ? a
-                        : `<span class="ping"${color}>@${c.replace(/\*/g, '&#42')}</span>`
+                        : `<span class="ping"${color}${dataAttr}>@${c.replace(/\*/g, '&#42')}</span>`
                 );
             }
         });
         return textContent;
     }
 
-    // raw "<@123>" / "<#123>" forms (embeds, system text) matched by id.
+    // Escape a display name for pill HTML (regex-safe + *-safe).
+    function pillName(raw) {
+        return escReg(String(raw)).replace(/\\\*/g, '&#42');
+    }
+
+    function userPillHtml(id, isDM) {
+        id = String(id);
+        const name = displayNameFor(id);
+        if (name !== id) {
+            return `<span class="ping" data-uid="${id}">@${pillName(name)}</span>`;
+        }
+        if (!isDM && lookup.roles[id]) {
+            const r = lookup.roles[id];
+            const color = r.color ? ` style="color: ${r.color}"` : '';
+            return `<span class="ping"${color} data-rid="${id}">@${pillName(r.name)}</span>`;
+        }
+        // unknown for now: tagged so resolveMentions() can fill in the real
+        // name async instead of leaving @12345… forever
+        return `<span class="ping ping-unknown" data-uid="${id}">@${id}</span>`;
+    }
+
+    // raw "<@123>" / "<#123>" / "<@&123>" forms (embeds, system text)
+    // matched by id. Unknown channels render #deleted-channel like Discord.
     function formatEmbedPings(msg, text, isDM) {
         let textContent = text;
-        const ids = new Set();
-        text.replace(/&lt;@!?([0-9]+)&gt;/gm, (a, id) => {
-            ids.add(id);
-            return a;
+        // roles first: "<@&id>" arrives HTML-escaped, with or without the
+        // legacy "&amp" spelling that parseHTML emits for "&"
+        textContent = textContent.replace(/&lt;@&amp;?(\d+)&gt;/gm, (a, id) => {
+            const r = lookup.roles[String(id)];
+            const color = r && r.color ? ` style="color: ${r.color}"` : '';
+            const label = r ? `@${pillName(r.name)}` : '@deleted-role';
+            return `<span class="ping"${color} data-rid="${id}">${label}</span>`;
         });
-        text.replace(/&lt;#(\d+)&gt;/gm, (a, id) => {
-            ids.add(id);
-            return a;
-        });
-
-        ids.forEach((id) => {
-            let name = displayNameFor(id);
-            let color = '';
-            if (name === id && !isDM) {
-                const r = lookup.roles[id];
-                if (r) {
-                    name = r.name;
-                    if (r.color) color = ` style="color: ${r.color}"`;
-                }
+        // users
+        textContent = textContent.replace(/&lt;@!?(\d+)&gt;/gm, (a, id) =>
+            userPillHtml(id, isDM)
+        );
+        // channels
+        textContent = textContent.replace(/&lt;#(\d+)&gt;/gm, (a, id) => {
+            const c = lookup.channels[String(id)];
+            if (c) {
+                return `<span class="ping" data-cid="${id}">#${pillName(c.name)}</span>`;
             }
-            let chanName = null;
-            if (!isDM) {
-                const c = lookup.channels[id];
-                if (c) chanName = c.name;
-            }
-            const pingRegex = new RegExp(`(?:(<|>)?&lt;@!?(${id})&gt;)`, 'g');
-            const channelRegex = new RegExp(`&lt;#${id}&gt;`, 'g');
-            textContent = textContent.replace(pingRegex, (a, b) =>
-                b == '<' || b == '>'
-                    ? a
-                    : `<span class="ping"${color}>@${escReg(String(name)).replace(/\\\*/g, '&#42')}</span>`
-            );
-            if (!isDM && chanName) {
-                textContent = textContent.replace(
-                    channelRegex,
-                    `<span class="ping ${id}">#${escReg(chanName)}</span>`
-                );
-            }
+            return `<span class="ping ping-unknown" data-cid="${id}">#deleted-channel</span>`;
         });
         return textContent;
     }
@@ -230,6 +260,11 @@ const Fmt = (() => {
         const embeddedLink = !!opts.embeddedLink;
         const isDM = !!opts.isDM;
         let textContent = parseHTML(text || '');
+
+        // Protect code spans first: mentions, links and markdown never apply
+        // inside them — and always apply outside them.
+        const stashed = stashCodeSpans(textContent, embed);
+        textContent = stashed.text;
 
         if (ping || !embed) {
             textContent = formatEmbedPings(msg, textContent, isDM);
@@ -244,7 +279,7 @@ const Fmt = (() => {
         }
 
         textContent = parseLinks(textContent);
-        textContent = parseStyling(textContent, embed);
+        textContent = styleMarkdown(textContent);
         textContent = parseUnicodeEmojis(textContent);
         textContent = parseCustomEmojis(textContent);
         try {
@@ -252,7 +287,7 @@ const Fmt = (() => {
         } catch (e) {
             /* twemoji CDN may be blocked; text still renders */
         }
-        return textContent;
+        return restoreCodeSpans(textContent, stashed.stash);
     }
 
     // Outgoing text: ascii shortcuts -> unicode, :shortcuts: -> unicode,
@@ -305,6 +340,8 @@ const Fmt = (() => {
         parseHTML,
         parseLinks,
         parseStyling,
+        stashCodeSpans,
+        restoreCodeSpans,
         parseUnicodeEmojis,
         parseCustomEmojis,
         formatPings,

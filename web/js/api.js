@@ -231,6 +231,7 @@ const Api = (() => {
         guildMembers: (gid, limit) => get(`/api/guilds/${gid}/members?limit=${limit || 500}`),
         guildRoles: (gid) => get(`/api/guilds/${gid}/roles`),
         dms: () => get('/api/dms'),
+        createDM: (user_id) => post('/api/dms', { user_id }),
         emojis: () => get('/api/emojis'),
         messages: (cid, opts) => {
             const q = new URLSearchParams();
@@ -240,6 +241,8 @@ const Api = (() => {
             return get(`/api/channels/${cid}/messages?${q.toString()}`);
         },
         message: (cid, mid) => get(`/api/channels/${cid}/messages/${mid}`),
+        resolve: (users, channels, roles) =>
+            post('/api/resolve', { users, channels, roles }),
         sendMessage: (cid, content, embed, extra) =>
             post(`/api/channels/${cid}/messages`, { content, embed, ...(extra || {}) }),
         editMessage: (cid, mid, content) => patch(`/api/channels/${cid}/messages/${mid}`, { content }),

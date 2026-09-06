@@ -35,7 +35,7 @@ WEB_DIR = BASE_DIR / "web"
 # Bump whenever the REST/WS contract changes. The site checks this on
 # startup and tells the user to restart / hard-refresh on mismatch
 # instead of hanging on the loader forever.
-SERVER_VERSION = 12
+SERVER_VERSION = 14
 
 log = logging.getLogger("botcord")
 
@@ -802,7 +802,7 @@ class _MemberTimeout(Exception):
     """Internal: member HTTP fetch exceeded its budget; use the cache."""
 
 
-def get_text_channel(client, channel_id: str):
+async def get_text_channel(client, channel_id: str):
     try:
         cid = int(channel_id)
     except (TypeError, ValueError):
@@ -812,7 +812,20 @@ def get_text_channel(client, channel_id: str):
         )
     channel = client.get_channel(cid)
     if channel is None:
-        # DM channels may not be cached; try fetching the user instead
+        # uncached channel (usually a DM): fetch it from the API instead
+        # of 404ing, so DMs always open
+        try:
+            channel = await client.fetch_channel(cid)
+        except discord.NotFound:
+            channel = None
+        except discord.Forbidden:
+            raise web.HTTPForbidden(
+                text=json.dumps({"error": "MISSING-ACCESS"}),
+                content_type="application/json",
+            )
+        except discord.HTTPException:
+            channel = None
+    if channel is None:
         raise web.HTTPNotFound(
             text=json.dumps({"error": "UNKNOWN-CHANNEL"}),
             content_type="application/json",
@@ -1123,12 +1136,59 @@ async def api_dms(request):
                     "channel_id": str(ch.id),
                     "type": str(getattr(ch, "type", "private")).split(".")[-1],
                     "recipient": user_json(other) if other else None,
+                    "recipients": [
+                        user_json(u)
+                        for u in (getattr(ch, "recipients", []) or [])
+                        if u is not None
+                    ]
+                    or ([user_json(other)] if other else []),
                     "me": user_json(me) if me else None,
                 }
             )
         except Exception:
             continue
     return web.json_response({"dms": dms})
+
+
+@routes.post("/api/dms")
+async def api_create_dm(request):
+    """Open (or reuse) a DM with a user, so any user is messageable."""
+    client = require_bot(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    try:
+        uid = str(body.get("user_id") or "").strip()
+    except Exception:
+        uid = ""
+    if not uid.isdigit():
+        return web.json_response({"error": "BAD-USER"}, status=400)
+    try:
+        user = client.get_user(int(uid))
+        if user is None:
+            user = await client.fetch_user(int(uid))
+    except (discord.NotFound, ValueError):
+        return web.json_response({"error": "UNKNOWN-USER"}, status=404)
+    except discord.HTTPException as exc:
+        return web.json_response(
+            {"error": f"DISCORD-API-ERROR: {exc}"}, status=502
+        )
+    if user is None:
+        return web.json_response({"error": "UNKNOWN-USER"}, status=404)
+    try:
+        dm = getattr(user, "dm_channel", None) or await user.create_dm()
+    except discord.Forbidden:
+        return web.json_response({"error": "CANNOT-DM"}, status=403)
+    except discord.HTTPException as exc:
+        return web.json_response(
+            {"error": f"DISCORD-API-ERROR: {exc}"}, status=502
+        )
+    return web.json_response(
+        {"channel_id": str(dm.id), "recipient": user_json(user)}
+    )
 
 
 @routes.get("/api/emojis")
@@ -1150,10 +1210,139 @@ async def api_emojis(request):
     return web.json_response({"emojis": emojis})
 
 
+async def resolve_lookup(client, users, channels, roles):
+    """Best-effort display names for ids the browser couldn't resolve.
+
+    History from before login (or half-loaded guilds) renders mentions as
+    @12345… — this fills in the real names via cache first, Discord API
+    second. Unknown ids are simply omitted (caller keeps the raw form).
+    """
+    out_users, out_channels, out_roles = {}, {}, {}
+    for uid in (users or [])[:25]:
+        if not uid.isdigit():
+            continue
+        try:
+            u = client.get_user(int(uid))
+            if u is None:
+                u = await client.fetch_user(int(uid))
+        except Exception:
+            continue
+        if u is None:
+            continue
+        display = getattr(u, "global_name", None) or getattr(u, "name", "?")
+        color = None
+        try:
+            for g in getattr(client, "guilds", []) or []:
+                try:
+                    m = g.get_member(int(uid))
+                except Exception:
+                    m = None
+                if m is not None:
+                    display = getattr(m, "display_name", None) or display
+                    try:
+                        cv = int(getattr(getattr(m, "color", None), "value", 0) or 0)
+                        color = f"#{cv:06x}" if cv else None
+                    except Exception:
+                        pass
+                    break
+        except Exception:
+            pass
+        try:
+            avatar = str(u.display_avatar.url)
+        except Exception:
+            avatar = None
+        out_users[uid] = {
+            "id": uid,
+            "username": getattr(u, "name", "?"),
+            "display": display,
+            "color": color,
+            "avatar": avatar,
+        }
+    for cid in (channels or [])[:25]:
+        if not cid.isdigit():
+            continue
+        try:
+            ch = client.get_channel(int(cid))
+            if ch is None:
+                ch = await client.fetch_channel(int(cid))
+        except Exception:
+            continue
+        if ch is None:
+            continue
+        name = getattr(ch, "name", None)
+        if not name:
+            try:
+                rec = getattr(ch, "recipient", None)
+                name = getattr(rec, "name", None) or "DM"
+            except Exception:
+                name = "DM"
+        out_channels[cid] = {"id": cid, "name": str(name)}
+    want_roles = {r for r in (roles or [])[:25] if r.isdigit()}
+    if want_roles:
+        try:
+            guilds = getattr(client, "guilds", []) or []
+        except Exception:
+            guilds = []
+        for g in guilds:
+            try:
+                groles = getattr(g, "roles", []) or []
+            except Exception:
+                continue
+            for r in groles:
+                rid = str(getattr(r, "id", ""))
+                if rid in want_roles and rid not in out_roles:
+                    try:
+                        cv = int(getattr(getattr(r, "color", None), "value", 0) or 0)
+                    except Exception:
+                        cv = 0
+                    out_roles[rid] = {
+                        "id": rid,
+                        "name": getattr(r, "name", "?"),
+                        "color": f"#{cv:06x}" if cv else None,
+                    }
+            if len(out_roles) >= len(want_roles):
+                break
+    return {"users": out_users, "channels": out_channels, "roles": out_roles}
+
+
+@routes.post("/api/resolve")
+async def api_resolve(request):
+    client = require_bot(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    def id_list(key):
+        try:
+            raw = body.get(key) or []
+        except Exception:
+            return []
+        out = []
+        try:
+            for v in list(raw)[:25]:
+                s = str(v).strip()
+                if s.isdigit() and s not in out:
+                    out.append(s)
+        except Exception:
+            pass
+        return out
+
+    try:
+        data = await resolve_lookup(
+            client, id_list("users"), id_list("channels"), id_list("roles")
+        )
+    except Exception as exc:
+        return web.json_response({"error": f"DISCORD-API-ERROR: {exc}"}, status=502)
+    return web.json_response(data)
+
+
 @routes.get("/api/channels/{cid}/messages")
 async def api_get_messages(request):
     client = require_bot(request)
-    channel = get_text_channel(client, request.match_info["cid"])
+    channel = await get_text_channel(client, request.match_info["cid"])
     messages = await fetch_history(
         channel,
         limit=request.query.get("limit", "50"),
@@ -1167,7 +1356,7 @@ async def api_get_messages(request):
 async def api_get_message(request):
     """Authoritative single-message fetch (reactions/components state)."""
     client = require_bot(request)
-    channel = get_text_channel(client, request.match_info["cid"])
+    channel = await get_text_channel(client, request.match_info["cid"])
     try:
         msg = await channel.fetch_message(int(request.match_info["mid"]))
     except (ValueError, discord.NotFound):
@@ -1184,7 +1373,7 @@ async def api_get_message(request):
 @routes.post("/api/channels/{cid}/messages")
 async def api_send_message(request):
     client = require_bot(request)
-    channel = get_text_channel(client, request.match_info["cid"])
+    channel = await get_text_channel(client, request.match_info["cid"])
     content = ""
     embed_data = None
     reply_to = ""
@@ -1304,7 +1493,7 @@ async def api_send_message(request):
 @routes.patch("/api/channels/{cid}/messages/{mid}")
 async def api_edit_message(request):
     client = require_bot(request)
-    channel = get_text_channel(client, request.match_info["cid"])
+    channel = await get_text_channel(client, request.match_info["cid"])
     try:
         body = await request.json()
     except Exception:
@@ -1328,7 +1517,7 @@ async def api_edit_message(request):
 @routes.delete("/api/channels/{cid}/messages/{mid}")
 async def api_delete_message(request):
     client = require_bot(request)
-    channel = get_text_channel(client, request.match_info["cid"])
+    channel = await get_text_channel(client, request.match_info["cid"])
     try:
         msg = await channel.fetch_message(int(request.match_info["mid"]))
     except (ValueError, discord.NotFound):
@@ -1350,7 +1539,7 @@ async def api_delete_message(request):
 async def api_bulk_delete(request):
     """Purge N recent messages (the old `/purge <num>` command)."""
     client = require_bot(request)
-    channel = get_text_channel(client, request.match_info["cid"])
+    channel = await get_text_channel(client, request.match_info["cid"])
     try:
         body = await request.json()
     except Exception:
@@ -1371,7 +1560,7 @@ async def api_bulk_delete(request):
 @routes.post("/api/channels/{cid}/pins/{mid}")
 async def api_pin_message(request):
     client = require_bot(request)
-    channel = get_text_channel(client, request.match_info["cid"])
+    channel = await get_text_channel(client, request.match_info["cid"])
     try:
         msg = await channel.fetch_message(int(request.match_info["mid"]))
     except (ValueError, discord.NotFound):
@@ -1388,7 +1577,7 @@ async def api_pin_message(request):
 @routes.delete("/api/channels/{cid}/pins/{mid}")
 async def api_unpin_message(request):
     client = require_bot(request)
-    channel = get_text_channel(client, request.match_info["cid"])
+    channel = await get_text_channel(client, request.match_info["cid"])
     try:
         msg = await channel.fetch_message(int(request.match_info["mid"]))
     except (ValueError, discord.NotFound):
@@ -1405,7 +1594,7 @@ async def api_unpin_message(request):
 @routes.post("/api/channels/{cid}/messages/{mid}/reactions")
 async def api_add_reaction(request):
     client = require_bot(request)
-    channel = get_text_channel(client, request.match_info["cid"])
+    channel = await get_text_channel(client, request.match_info["cid"])
     try:
         body = await request.json()
     except Exception:
@@ -1433,7 +1622,7 @@ async def api_add_reaction(request):
 @routes.delete("/api/channels/{cid}/messages/{mid}/reactions")
 async def api_remove_reaction(request):
     client = require_bot(request)
-    channel = get_text_channel(client, request.match_info["cid"])
+    channel = await get_text_channel(client, request.match_info["cid"])
     emoji = (request.query.get("emoji") or "").strip()
     if not emoji:
         try:
@@ -1464,7 +1653,7 @@ async def api_remove_reaction(request):
 @routes.post("/api/channels/{cid}/typing")
 async def api_typing(request):
     client = require_bot(request)
-    channel = get_text_channel(client, request.match_info["cid"])
+    channel = await get_text_channel(client, request.match_info["cid"])
     try:
         await channel.trigger_typing()
     except Exception:
@@ -1475,7 +1664,7 @@ async def api_typing(request):
 @routes.post("/api/channels/{cid}/invites")
 async def api_create_invite(request):
     client = require_bot(request)
-    channel = get_text_channel(client, request.match_info["cid"])
+    channel = await get_text_channel(client, request.match_info["cid"])
     try:
         body = await request.json()
     except Exception:

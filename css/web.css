@@ -216,6 +216,38 @@
     flex-shrink: 0;
 }
 
+.mentionGlyph {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #4f545c;
+    color: #dcddde;
+    font-size: 16px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.mentionGlyph.glyphChan {
+    border-radius: 8px;
+    color: #80848e;
+}
+
+.mentionGlyph.glyphAt {
+    border-radius: 8px;
+    background: rgba(88, 101, 242, 0.35);
+    color: #c9cdfb;
+}
+
+.roleDot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
 .mentionTexts {
     min-width: 0;
 }
@@ -232,6 +264,35 @@
 .mentionSub {
     color: #b9bbbe;
     font-size: 12px;
+}
+
+.dmBotTag {
+    background: #5865f2;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 4px;
+    padding: 1px 4px;
+    margin-left: 6px;
+    flex-shrink: 0;
+}
+
+.dmGroupIcon {
+    width: 25px;
+    height: 25px;
+    font-size: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.dmChannel h5.viewableText {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
 }
 
 /* ==================== message grid placement ====================
@@ -492,6 +553,24 @@
 
 .compIconBtn:hover {
     opacity: 1;
+}
+
+.compIconImg {
+    width: 22px;
+    height: 22px;
+    display: block;
+    pointer-events: none;
+}
+
+#attachBtn .compIconImg {
+    width: 18px;
+    height: 18px;
+}
+
+#attachBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 /* uploading placeholder inside optimistic messages */

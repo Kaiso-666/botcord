@@ -111,7 +111,11 @@ silently. The usual causes:
 
 * Splash login screen, token validation, team-app owner picker
 * Guild list, channel list (categories, voice shown, unread badges)
-* DM home with open-DM list
+* DM home with full DM list (users, bots, group DMs) — right-click any
+  user and pick Message to open a new DM; history, sending, reactions,
+  typing and replies all work in DMs
+* Autocomplete over the message bar: `@` completes members, roles and
+  @everyone/@here; `#` completes text channels — both filter as you type
 * Message history (100), grouped rendering, markdown / spoilers /
   code blocks / unicode + custom emoji, mentions, embeds, attachments
 * Link previews: bare image / video / GIF links (and Giphy share links)
@@ -129,7 +133,15 @@ silently. The usual causes:
   @ON/@OFF ping toggle, quoted preview on messages (click jumps to the
   original when loaded)
 * Discord-style mentions: Shift+Click a name/avatar/member (or type `@`
-  for autocomplete) — shows `@Name` pills, sends `<@id>` so it pings
+  for autocomplete) — shows `@Name` pills, sends `<@id>` so it pings.
+  Unknown ids (`@12345…`, also in pre-login history, embeds and V2 text)
+  resolve to real names via `POST /api/resolve` once the data arrives
+* Full markdown everywhere: message bodies, embeds, polls and Components
+  V2 text all render bold/italic/underline/spoilers/code/links/emoji —
+  code spans are protected, never disable the rest
+* Composer icons: drop your own art at `resources/icons/attach.svg`,
+  `resources/icons/emoji.svg`, `resources/icons/voice.svg` (`.png` also
+  works, ~24px ideal) — otherwise built-in glyphs are used
 * Reactions: view, toggle by clicking, add via right-click → Add reaction
   (unicode + server emoji), realtime gateway updates
 * Message Components V2 + polls rendered (buttons/selects shown disabled —
@@ -176,7 +188,9 @@ stores it automatically); without it the API answers `NO-SESSION`.
 | GET | `/api/guilds/{id}/members?limit=` | members |
 | GET | `/api/guilds/{id}/roles` | roles (position order) |
 | GET | `/api/dms` | DM channels + recipients |
+| POST | `/api/dms` | `{user_id}` → open/reuse a DM → `{channel_id, recipient}` |
 | GET | `/api/emojis` | bot emoji list |
+| POST | `/api/resolve` | `{users[], channels[], roles[]}` → display names for unknown ids |
 | GET | `/api/channels/{id}/messages?limit&before&after` | messages, oldest first |
 | GET | `/api/channels/{id}/messages/{mid}` | single message (authoritative reactions/components state) |
 | POST | `/api/channels/{id}/messages` | `{content?, embed?, reply_to?, mention_author?}` |
