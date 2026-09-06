@@ -25,7 +25,7 @@ const Api = (() => {
         const opts = { method: 'POST', headers: sessionHeaders() };
         if (ctrl) {
             opts.signal = ctrl.signal;
-            timer = setTimeout(() => ctrl.abort(), 15000);
+            timer = setTimeout(() => ctrl.abort(), 30000);
         }
         let res;
         try {
@@ -221,7 +221,7 @@ const Api = (() => {
         version: () => get('/api/version'),
         // auth / session
         status: () => get('/api/status'),
-        login: (token) => post('/api/login', { token }),
+        login: (token) => post('/api/login', { token }, 60000),
         logout: () => post('/api/logout'),
         teamSelect: (user_id) => post('/api/team-select', { user_id }),
         me: () => get('/api/me'),
