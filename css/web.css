@@ -121,6 +121,439 @@
     font-size: 14px;
 }
 
+/* ============ Discord-style mentions (@ pills + autocomplete) ============ */
+
+/* Backdrop that renders `<@id>` as `@Name` pills under the textarea. The
+ * textarea text itself is transparent so the pills show through exactly
+ * where the raw tag sits; caret stays visible. */
+#msgWrap {
+    position: relative;
+    flex: 1;
+    display: flex;
+    min-width: 0;
+}
+
+#msgBackdrop {
+    position: absolute;
+    inset: 0;
+    padding: 10px;
+    overflow: hidden;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    pointer-events: none;
+    font-family: Whitney-light, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    font-weight: 400;
+    word-spacing: 2px;
+    line-height: normal;
+    color: #dcddde;
+}
+
+#msgWrap #msgbox {
+    position: relative;
+    z-index: 1;
+    flex: 1;
+    min-width: 0;
+    color: transparent;
+    caret-color: #dcddde;
+    background: transparent;
+}
+
+#msgWrap #msgbox::selection {
+    background: rgba(88, 101, 242, 0.4);
+}
+
+#msgWrap #msgbox::placeholder {
+    color: #72767d;
+    opacity: 1;
+}
+
+.msgMentionPill {
+    background: rgba(88, 101, 242, 0.35);
+    color: #c9cdfb;
+    border-radius: 3px;
+    padding: 0 2px;
+    font-weight: 500;
+}
+
+.msgChannelPill {
+    color: #c9cdfb;
+}
+
+#mentionSuggest {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(100% + 8px);
+    background: #2f3136;
+    border: 1px solid #202225;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    max-height: 280px;
+    overflow-y: auto;
+    z-index: 600;
+    padding: 6px;
+}
+
+.mentionRow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.mentionRow:hover,
+.mentionRow.active {
+    background: #393c42;
+}
+
+.mentionAvatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.mentionTexts {
+    min-width: 0;
+}
+
+.mentionName {
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mentionSub {
+    color: #b9bbbe;
+    font-size: 12px;
+}
+
+/* ==================== reactions ==================== */
+
+.reactions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 4px 0 2px 0;
+}
+
+.reaction {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #2f3136;
+    border: 1px solid #4f545c;
+    border-radius: 8px;
+    padding: 2px 7px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 14px;
+    line-height: 20px;
+}
+
+.reaction:hover {
+    border-color: #b9bbbe;
+}
+
+.reaction.me {
+    background: rgba(88, 101, 242, 0.25);
+    border-color: #5865f2;
+}
+
+.reactionEmoji {
+    width: 18px;
+    height: 18px;
+}
+
+.reactionEmojiTxt {
+    font-size: 16px;
+}
+
+.reactionCount {
+    color: #b9bbbe;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.reaction.me .reactionCount {
+    color: #c9cdfb;
+}
+
+.emojiPicker {
+    position: fixed;
+    z-index: 9500;
+    background: #2f3136;
+    border: 1px solid #202225;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    padding: 8px;
+    display: grid;
+    grid-template-columns: repeat(6, 32px);
+    gap: 2px;
+    max-width: 240px;
+}
+
+.emojiPick {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.emojiPick:hover {
+    background: #393c42;
+}
+
+.emojiPickImg {
+    width: 24px;
+    height: 24px;
+}
+
+.emojiSep {
+    grid-column: 1 / -1;
+    height: 1px;
+    background: #4f545c;
+    margin: 4px 0;
+}
+
+/* ==================== reply bar ==================== */
+
+.replyBar {
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    color: #b9bbbe;
+    cursor: pointer;
+    margin: 2px 0 2px 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.replyBar:hover {
+    color: #dcddde;
+}
+
+.replyArrow {
+    color: #72767d;
+    margin-right: 4px;
+}
+
+.replyAuthor {
+    font-weight: 600;
+    margin-right: 4px;
+}
+
+.replySnippet {
+    color: #72767d;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.replyFlash {
+    background-color: rgba(88, 101, 242, 0.25) !important;
+    border-radius: 4px;
+    transition: background-color 0.3s;
+}
+
+/* ==================== components V2 ==================== */
+
+.v2wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 4px 0;
+    max-width: 520px;
+}
+
+.v2container {
+    background: #2f3136;
+    border: 1px solid #202225;
+    border-left: 4px solid #5865f2;
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.v2row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.v2section {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.v2section-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.v2accessory {
+    flex-shrink: 0;
+    max-width: 160px;
+}
+
+.v2text {
+    color: #dcddde;
+    font-size: 15px;
+    word-wrap: break-word;
+}
+
+.v2sep {
+    border: none;
+    border-top: 1px solid #4f545c;
+    margin: 4px 0;
+}
+
+.v2sep-plain {
+    border-top-color: transparent;
+}
+
+.v2gallery {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.v2gallery-item {
+    width: 100%;
+    height: 160px;
+    object-fit: cover;
+    border-radius: 6px;
+}
+
+.v2gallery-item:only-child {
+    grid-column: 1 / -1;
+    height: auto;
+    max-height: 320px;
+}
+
+.v2thumb {
+    width: 80px;
+    height: 80px;
+    object-fit: cover;
+    border-radius: 8px;
+}
+
+.v2file {
+    background: #2f3136;
+    border: 1px solid #202225;
+    border-radius: 6px;
+    padding: 10px;
+}
+
+.v2btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    color: #fff;
+    text-decoration: none;
+}
+
+a.v2btn:hover {
+    text-decoration: none;
+    filter: brightness(1.1);
+}
+
+.v2btn-primary {
+    background: #5865f2;
+}
+
+.v2btn-secondary {
+    background: #4f545c;
+}
+
+.v2btn-success {
+    background: #57f287;
+    color: #060907;
+}
+
+.v2btn-danger {
+    background: #ed4245;
+}
+
+.v2btn-link {
+    background: #4f545c;
+}
+
+button.v2btn:disabled,
+.v2btn.v2disabled {
+    cursor: not-allowed;
+    opacity: 0.75;
+}
+
+.v2emoji {
+    width: 18px;
+    height: 18px;
+}
+
+.v2select {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #2f3136;
+    border: 1px solid #202225;
+    border-radius: 4px;
+    padding: 8px 12px;
+    color: #b9bbbe;
+    font-size: 14px;
+    min-width: 200px;
+}
+
+.v2poll {
+    background: #2f3136;
+    border: 1px solid #202225;
+    border-radius: 8px;
+    padding: 12px;
+    margin: 4px 0;
+    max-width: 420px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.v2poll-q {
+    color: #fff;
+    font-weight: 600;
+    font-size: 15px;
+}
+
+.v2poll-a {
+    background: #383b41;
+    border-radius: 4px;
+    padding: 6px 10px;
+    color: #dcddde;
+    font-size: 14px;
+}
+
 /* Mobile-only toggle buttons (hidden on desktop) */
 .mobileOnly {
     display: none;

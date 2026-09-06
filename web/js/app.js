@@ -9,7 +9,7 @@
 
 // Must match SERVER_VERSION in server.py. Checked on startup so a stale
 // server or cached site fails with a clear message instead of hanging.
-const CLIENT_VERSION = 4;
+const CLIENT_VERSION = 5;
 
 const S = {
     me: null,
@@ -1003,6 +1003,7 @@ function messageBlock(m) {
     darkBG.dataset.authorId = m.author.id;
 
     const isDM = !m.guild_id;
+    renderReplyBar(m, darkBG);
     if (m.content && m.content.length) {
         const text = el('p', 'messageText');
         text.innerHTML = Fmt.parseMessage(m.clean_content || m.content, m, { isDM });
@@ -1017,6 +1018,21 @@ function messageBlock(m) {
             console.error('embed render failed', err);
         }
     });
+    try {
+        renderComponentsV2(m, darkBG, isDM);
+    } catch (err) {
+        console.error('components render failed', err);
+    }
+    try {
+        renderPoll(m, darkBG, isDM);
+    } catch (err) {
+        console.error('poll render failed', err);
+    }
+    try {
+        renderReactions(m, darkBG);
+    } catch (err) {
+        console.error('reactions render failed', err);
+    }
     if (!darkBG.children.length) {
         const text = el('p', 'messageText', '(empty message)');
         darkBG.appendChild(text);
@@ -1029,16 +1045,68 @@ function messageBlock(m) {
     return darkBG;
 }
 
+// Slim reply header, like Discord: jumps to the referenced message when it
+// is already loaded, otherwise stays hidden (no content fetch endpoint yet).
+function renderReplyBar(m, parent) {
+    const ref = m.reference;
+    if (!ref || !ref.message_id) return;
+    const target = document.getElementById(ref.message_id);
+    if (!target) return;
+    let author = 'a message';
+    let snippet = '';
+    try {
+        const nameNode = target.querySelector('.messageUsername');
+        if (nameNode && nameNode.innerText) author = nameNode.innerText;
+        const textNode = target.querySelector('.messageText');
+        if (textNode && textNode.innerText) snippet = textNode.innerText.slice(0, 80);
+    } catch (e) {
+        /* ignore */
+    }
+    const bar = el('div', 'replyBar');
+    bar.title = 'Jump to replied message';
+    bar.appendChild(el('span', 'replyArrow', '↩ '));
+    bar.appendChild(el('span', 'replyAuthor', author));
+    if (snippet) bar.appendChild(el('span', 'replySnippet', `  ${snippet}`));
+    bar.addEventListener('click', (e) => {
+        e.stopPropagation();
+        try {
+            target.scrollIntoView({ block: 'center' });
+            target.classList.add('replyFlash');
+            setTimeout(() => target.classList.remove('replyFlash'), 1200);
+        } catch (err) {
+            /* ignore */
+        }
+    });
+    parent.appendChild(bar);
+}
+
 function addHeader(darkBG, m) {
     const { name, color, avatar } = authorOf(m);
     const img = el('img', 'messageImg');
     img.src = avatar;
     img.height = 40;
     img.width = 40;
+    img.title = `${name} — Shift+Click to mention`;
+    img.addEventListener('click', (e) => {
+        if (e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            insertMention(m.author.id);
+        }
+    });
     darkBG.insertBefore(img, darkBG.firstChild);
 
     const uname = el('p', 'messageUsername', name);
     uname.style.color = color;
+    uname.title = `${name} — Shift+Click to mention`;
+    uname.addEventListener('click', (e) => {
+        // Discord-style: Shift+LeftClick drops a mention pill into the box.
+        if (e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            insertMention(m.author.id);
+        }
+    });
     uname.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -1164,6 +1232,8 @@ async function selectChannel(c, div, opts) {
         $('msgbox').placeholder = S.channel.isDM
             ? `Message @${S.channel.name}`
             : `Message #${S.channel.name}`;
+        hideMentionSuggest();
+        syncMentionBackdrop();
 
         renderTyping();
         clearMessages();
@@ -1317,8 +1387,16 @@ function renderMemberList(g) {
 
         const username = el('p', 'mLUsername', m.display_name || m.username);
         username.style.color = m.color || '#8E9297';
+        username.title = `${m.display_name || m.username} — Shift+Click to mention`;
         userDiv.appendChild(username);
 
+        userDiv.addEventListener('click', (e) => {
+            if (e.shiftKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                insertMention(m.id);
+            }
+        });
         userDiv.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             userContextMenu(e, m);
@@ -1381,6 +1459,687 @@ function sendTyping() {
     if (now - typingThrottle < 8000) return;
     typingThrottle = now;
     Api.typing(S.channel.id).catch(() => {});
+}
+
+/* ==================== mentions (Discord-style) ===========================
+ * The box value stays raw (`<@id>`, which is what pings on send) while a
+ * backdrop layer renders it as `@Name` pills — exactly what Discord shows.
+ * Shift+LeftClick on any name/avatar, the Mention menu items, or the `@`
+ * autocomplete all insert the same raw tag.
+ */
+
+function memberNameById(id) {
+    id = String(id);
+    const pools = Object.values(S.members || {});
+    for (const arr of pools) {
+        const hit = (arr || []).find((x) => String(x.id) === id);
+        if (hit) return hit.display_name || hit.username || hit.global_name || id;
+    }
+    for (const d of S.dms || []) {
+        if (d.recipient && String(d.recipient.id) === id) {
+            return d.recipient.global_name || d.recipient.username || id;
+        }
+    }
+    if (S.me && String(S.me.id) === id) return S.me.global_name || S.me.username;
+    if (S.owner && String(S.owner.id) === id) {
+        return S.owner.global_name || S.owner.username;
+    }
+    return id;
+}
+
+function escHtml(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+// Candidates for @ autocomplete: current guild members first, then the rest.
+function mentionCandidates() {
+    const seen = new Set();
+    const out = [];
+    const push = (u) => {
+        if (!u || seen.has(String(u.id))) return;
+        seen.add(String(u.id));
+        out.push(u);
+    };
+    const gid = S.guildId;
+    if (gid && S.members[gid]) {
+        [...S.members[gid]]
+            .sort((a, b) =>
+                (a.display_name || a.username || '').localeCompare(
+                    b.display_name || b.username || ''
+                )
+            )
+            .forEach((m) =>
+                push({
+                    id: m.id,
+                    name: m.display_name || m.username,
+                    username: m.username,
+                    avatar: m.avatar,
+                    bot: m.bot,
+                })
+            );
+    }
+    (S.dms || []).forEach((d) => d.recipient && push(d.recipient));
+    if (S.me) push({ id: S.me.id, name: S.me.username, username: S.me.username, avatar: S.me.avatar });
+    return out;
+}
+
+function insertMention(userId) {
+    const box = $('msgbox');
+    if (!box) return;
+    if (!S.channel) {
+        toast('Select a channel first');
+        return;
+    }
+    userId = String(userId);
+    const tag = `<@${userId}>`;
+    const start = box.selectionStart != null ? box.selectionStart : box.value.length;
+    const end = box.selectionEnd != null ? box.selectionEnd : box.value.length;
+    const before = box.value.slice(0, start);
+    const after = box.value.slice(end);
+    const needsSpace = before && !/\s$/.test(before) ? ' ' : '';
+    box.value = `${before}${needsSpace}${tag} ${after.replace(/^\s/, '')}`;
+    const pos = (before + needsSpace + tag + ' ').length;
+    try {
+        box.focus();
+        box.setSelectionRange(pos, pos);
+    } catch (e) {
+        /* ignore */
+    }
+    hideMentionSuggest();
+    syncMentionBackdrop();
+    sendTyping();
+}
+
+function ensureMsgWrap() {
+    const box = $('msgbox');
+    if (!box || $('msgWrap')) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'msgWrap';
+    const bd = document.createElement('div');
+    bd.id = 'msgBackdrop';
+    bd.setAttribute('aria-hidden', 'true');
+    box.parentElement.insertBefore(wrap, box);
+    wrap.appendChild(bd);
+    wrap.appendChild(box);
+    const sug = document.createElement('div');
+    sug.id = 'mentionSuggest';
+    sug.className = 'hidden';
+    wrap.appendChild(sug);
+    box.addEventListener('scroll', () => {
+        bd.scrollTop = box.scrollTop;
+        bd.scrollLeft = box.scrollLeft;
+    });
+}
+
+function syncMentionBackdrop() {
+    const box = $('msgbox');
+    const bd = $('msgBackdrop');
+    if (!box || !bd) return;
+    const raw = box.value;
+    if (!raw) {
+        bd.innerHTML = '';
+        return;
+    }
+    // Tokenize raw <@id> / <@!id> / <#id> / <@&id>; pills show @Name.
+    const parts = raw.split(/(<@!?\d+>|<#\d+>|<@&\d+>)/g);
+    let html = '';
+    for (const p of parts) {
+        let mm = p.match(/^<@!?(\d+)>$/);
+        if (mm) {
+            html += `<span class="msgMentionPill">@${escHtml(memberNameById(mm[1]))}</span>`;
+            continue;
+        }
+        mm = p.match(/^<#(\d+)>$/);
+        if (mm) {
+            const ch = (Fmt && Fmt.chanName) ? Fmt.chanName(mm[1]) : null;
+            html += `<span class="msgMentionPill msgChannelPill">#${escHtml(ch || 'channel')}</span>`;
+            continue;
+        }
+        mm = p.match(/^<@&(\d+)>$/);
+        if (mm) {
+            const rn = (Fmt && Fmt.roleName) ? Fmt.roleName(mm[1]) : null;
+            html += `<span class="msgMentionPill">@${escHtml(rn || 'role')}</span>`;
+            continue;
+        }
+        html += escHtml(p).replace(/\n/g, '<br>');
+    }
+    // trailing newline otherwise the backdrop shrinks vs the textarea
+    if (raw.endsWith('\n')) html += '<br>';
+    bd.innerHTML = html;
+    bd.scrollTop = box.scrollTop;
+    bd.scrollLeft = box.scrollLeft;
+}
+
+/* ---- @ autocomplete popup ---- */
+
+const MentionSuggest = { open: false, items: [], active: 0 };
+
+function hideMentionSuggest() {
+    MentionSuggest.open = false;
+    MentionSuggest.items = [];
+    MentionSuggest.active = 0;
+    const s = $('mentionSuggest');
+    if (s) s.classList.add('hidden');
+}
+
+function updateMentionSuggest() {
+    const box = $('msgbox');
+    const sug = $('mentionSuggest');
+    if (!box || !sug || !S.channel) {
+        hideMentionSuggest();
+        return false;
+    }
+    const pos = box.selectionStart != null ? box.selectionStart : box.value.length;
+    const before = box.value.slice(0, pos);
+    const at = before.match(/(^|\s)@([\p{L}\p{N}_.]{0,32})$/u);
+    if (!at) {
+        hideMentionSuggest();
+        return false;
+    }
+    const q = at[2].toLowerCase();
+    const items = mentionCandidates()
+        .filter(
+            (u) =>
+                !q ||
+                (u.name || '').toLowerCase().includes(q) ||
+                (u.username || '').toLowerCase().includes(q)
+        )
+        .slice(0, 8);
+    if (!items.length) {
+        hideMentionSuggest();
+        return false;
+    }
+    MentionSuggest.open = true;
+    MentionSuggest.items = items;
+    MentionSuggest.active = Math.min(MentionSuggest.active, items.length - 1);
+    sug.innerHTML = '';
+    items.forEach((u, i) => {
+        const row = el('div', 'mentionRow' + (i === MentionSuggest.active ? ' active' : ''));
+        const img = el('img', 'mentionAvatar');
+        img.src = u.avatar || DEFAULT_AVATAR;
+        row.appendChild(img);
+        const tx = el('div', 'mentionTexts');
+        tx.appendChild(el('div', 'mentionName', u.name || u.username || '?'));
+        if (u.username && u.username !== u.name) {
+            tx.appendChild(el('div', 'mentionSub', u.username + (u.bot ? ' • BOT' : '')));
+        } else if (u.bot) {
+            tx.appendChild(el('div', 'mentionSub', 'BOT'));
+        }
+        row.appendChild(tx);
+        row.addEventListener('mousedown', (e) => {
+            // mousedown: beats the textarea blur that would close the list
+            e.preventDefault();
+            pickMention(i);
+        });
+        sug.appendChild(row);
+    });
+    sug.classList.remove('hidden');
+    return true;
+}
+
+function pickMention(i) {
+    const u = MentionSuggest.items[i != null ? i : MentionSuggest.active];
+    if (!u) {
+        hideMentionSuggest();
+        return;
+    }
+    const box = $('msgbox');
+    const pos = box.selectionStart != null ? box.selectionStart : box.value.length;
+    const before = box.value.slice(0, pos);
+    const at = before.match(/(^|\s)@([\p{L}\p{N}_.]{0,32})$/u);
+    if (!at) {
+        hideMentionSuggest();
+        return;
+    }
+    const cutFrom = pos - at[2].length - 1; // include the '@'
+    box.value = `${box.value.slice(0, cutFrom)}<@${u.id}> ${box.value.slice(pos).replace(/^\s/, '')}`;
+    const npos = cutFrom + `<@${u.id}> `.length;
+    try {
+        box.focus();
+        box.setSelectionRange(npos, npos);
+    } catch (e) {
+        /* ignore */
+    }
+    hideMentionSuggest();
+    syncMentionBackdrop();
+}
+
+// Returns true when the key was consumed by the autocomplete list.
+function mentionSuggestKey(e) {
+    if (!MentionSuggest.open) return false;
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        MentionSuggest.active = (MentionSuggest.active + 1) % MentionSuggest.items.length;
+        updateMentionSuggest();
+        return true;
+    }
+    if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        MentionSuggest.active =
+            (MentionSuggest.active - 1 + MentionSuggest.items.length) % MentionSuggest.items.length;
+        updateMentionSuggest();
+        return true;
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        pickMention(MentionSuggest.active);
+        return true;
+    }
+    if (e.key === 'Escape') {
+        e.preventDefault();
+        hideMentionSuggest();
+        return true;
+    }
+    return false;
+}
+
+/* ==================== reactions (Discord-style) ========================== */
+
+const QUICK_EMOJIS = [
+    '👍', '❤️', '😂', '😮', '😢', '🙏',
+    '🎉', '🔥', '👀', '✅', '❌', '🤔',
+    '👏', '💯', '😅', '🥳', '😭', '🤝',
+    '👋', '💀',
+];
+
+function reactionApiEmoji(r) {
+    // What the REST API / discord.py wants back for this pill.
+    if (r.id) return `<:${r.name}:${r.id}>`;
+    return r.name;
+}
+
+function reactionPill(m, r) {
+    const pill = el('div', 'reaction' + (r.me ? ' me' : ''));
+    pill.dataset.key = r.key;
+    pill.title = r.id ? `:${r.name}:` : r.name;
+    if (r.url) {
+        const img = el('img', 'reactionEmoji');
+        img.src = r.url;
+        img.alt = r.name;
+        img.draggable = false;
+        pill.appendChild(img);
+    } else {
+        const s = el('span', 'reactionEmojiTxt', r.name);
+        pill.appendChild(s);
+        try {
+            if (typeof twemoji !== 'undefined') twemoji.parse(pill);
+        } catch (e) {
+            /* ignore */
+        }
+    }
+    pill.appendChild(el('span', 'reactionCount', String(r.count)));
+    pill.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        toggleReaction(m, r.key);
+    });
+    return pill;
+}
+
+function renderReactions(m, parent) {
+    const list = m.reactions || [];
+    if (!list.length) return;
+    const row = el('div', 'reactions');
+    row.dataset.mid = m.id;
+    list.forEach((r) => {
+        try {
+            row.appendChild(reactionPill(m, r));
+        } catch (e) {
+            /* ignore one bad reaction */
+        }
+    });
+    if (row.children.length) parent.appendChild(row);
+}
+
+function reactionsRow(mid) {
+    const node = document.getElementById(mid);
+    if (!node) return null;
+    let row = node.querySelector(':scope > .reactions');
+    if (!row) {
+        row = document.createElement('div');
+        row.className = 'reactions';
+        row.dataset.mid = mid;
+        node.appendChild(row);
+    }
+    return row;
+}
+
+// Absolute correction from gateway truth (count) — safe against double-apply
+// between the optimistic toggle and the WS echo.
+function patchReaction(mid, emoji, count, me) {
+    const row = reactionsRow(mid);
+    if (!row) return;
+    let pill = row.querySelector(`[data-key="${CSS.escape(emoji.key)}"]`);
+    if (count <= 0) {
+        if (pill) pill.remove();
+        if (!row.children.length) row.remove();
+        return;
+    }
+    if (!pill) {
+        const m = { id: mid, channel_id: (S.channel && S.channel.id) || '' };
+        pill = reactionPill(m, { ...emoji, count, me: !!me });
+        row.appendChild(pill);
+    }
+    const cnt = pill.querySelector('.reactionCount');
+    if (cnt) cnt.innerText = String(count);
+    if (me === true) pill.classList.add('me');
+    else if (me === false) pill.classList.remove('me');
+}
+
+function patchReactionEvent(d, kind) {
+    if (!d || !d.message_id) return;
+    if (S.channel && d.channel_id && d.channel_id !== S.channel.id) return;
+    if (kind === 'clear') {
+        const node = document.getElementById(d.message_id);
+        const row = node && node.querySelector(':scope > .reactions');
+        if (row) row.remove();
+        return;
+    }
+    if (kind === 'clear_emoji') {
+        patchReaction(d.message_id, d.emoji, 0, null);
+        return;
+    }
+    const self = S.me && d.user && String(d.user.id) === String(S.me.id);
+    if (kind === 'add') {
+        patchReaction(d.message_id, d.emoji, d.count || 1, self ? true : null);
+    } else if (kind === 'remove') {
+        patchReaction(d.message_id, d.emoji, d.count || 0, self ? false : null);
+    }
+}
+
+async function toggleReaction(m, key) {
+    const node = document.getElementById(m.id);
+    const pill = node && node.querySelector(`[data-key="${CSS.escape(key)}"]`);
+    const adding = pill ? !pill.classList.contains('me') : true;
+    let emoji = null;
+    (m.reactions || []).forEach((r) => {
+        if (r.key === key) emoji = reactionApiEmoji(r);
+    });
+    if (!emoji && pill) {
+        // pill created from a WS event (no cached message): the key encodes
+        // `name` (unicode) or `name:id` (custom) — rebuild the API form.
+        emoji = /\d/.test(key) && key.includes(':') ? `<:${key}>` : key;
+    }
+    if (!emoji) return;
+    // optimistic flip; the gateway echo corrects the absolute count
+    try {
+        if (adding) {
+            pill && pill.classList.add('me');
+            await Api.addReaction(m.channel_id, m.id, emoji);
+        } else {
+            pill && pill.classList.remove('me');
+            await Api.removeReaction(m.channel_id, m.id, emoji);
+        }
+    } catch (e) {
+        // revert the optimistic flip
+        try {
+            if (adding) pill && pill.classList.remove('me');
+            else pill && pill.classList.add('me');
+        } catch (err) {
+            /* ignore */
+        }
+        errorHandler(e);
+    }
+}
+
+async function addReactionTo(m, emoji) {
+    try {
+        await Api.addReaction(m.channel_id, m.id, emoji);
+    } catch (e) {
+        errorHandler(e);
+    }
+}
+
+function closeEmojiPicker() {
+    const p = $('emojiPicker');
+    if (p) p.remove();
+}
+
+function openEmojiPicker(x, y, m) {
+    closeRcMenu();
+    closeEmojiPicker();
+    const pop = el('div', 'emojiPicker');
+    pop.id = 'emojiPicker';
+    QUICK_EMOJIS.forEach((e) => {
+        const b = el('div', 'emojiPick', e);
+        b.title = e;
+        b.addEventListener('click', () => {
+            closeEmojiPicker();
+            addReactionTo(m, e);
+        });
+        pop.appendChild(b);
+    });
+    const customs = (S.emojis || []).slice(0, 48);
+    if (customs.length) {
+        const sep = el('div', 'emojiSep');
+        pop.appendChild(sep);
+        customs.forEach((e) => {
+            const b = el('div', 'emojiPick');
+            b.title = `:${e.name}:`;
+            const img = el('img', 'emojiPickImg');
+            img.src = e.url;
+            img.alt = e.name;
+            img.loading = 'lazy';
+            b.appendChild(img);
+            b.addEventListener('click', () => {
+                closeEmojiPicker();
+                addReactionTo(m, `<:${e.name}:${e.id}>`);
+            });
+            pop.appendChild(b);
+        });
+    }
+    document.body.appendChild(pop);
+    const r = pop.getBoundingClientRect();
+    pop.style.left = Math.max(8, Math.min(x, window.innerWidth - r.width - 8)) + 'px';
+    pop.style.top = Math.max(8, Math.min(y, window.innerHeight - r.height - 8)) + 'px';
+    setTimeout(() => {
+        document.addEventListener('click', function h(ev) {
+            if (!pop.contains(ev.target)) {
+                closeEmojiPicker();
+                document.removeEventListener('click', h);
+            }
+        });
+    }, 0);
+}
+
+/* ==================== message components V2 ==============================
+ * Renders Discord's Components V2 (containers, sections, text displays,
+ * media galleries, buttons, selects…) from the raw dicts the backend sends.
+ * Bots can't press each other's buttons / open selects, so interactive
+ * components render faithfully but disabled — except link buttons, which
+ * open normally.
+ */
+
+function v2TextNode(content, msg, isDM) {
+    const d = el('div', 'v2text');
+    try {
+        d.innerHTML = Fmt.parseMessage(content || '', msg, { isDM });
+    } catch (e) {
+        d.innerText = content || '';
+    }
+    return d;
+}
+
+function v2EmojiNode(emoji) {
+    if (!emoji) return null;
+    const name = emoji.name || emoji;
+    if (emoji.id) {
+        const img = document.createElement('img');
+        img.className = 'v2emoji';
+        img.alt = name || '';
+        img.draggable = false;
+        img.src = `https://cdn.discordapp.com/emojis/${emoji.id}.${emoji.animated ? 'gif' : 'png'}?v=1`;
+        return img;
+    }
+    const s = el('span', 'v2emojiTxt', typeof name === 'string' ? name : '');
+    try {
+        if (typeof twemoji !== 'undefined') twemoji.parse(s);
+    } catch (e) {
+        /* ignore */
+    }
+    return s;
+}
+
+const V2_BTN_CLASS = {
+    1: 'v2btn-primary',
+    2: 'v2btn-secondary',
+    3: 'v2btn-success',
+    4: 'v2btn-danger',
+    5: 'v2btn-link',
+};
+
+function renderV2Button(c, parent) {
+    const style = Number(c.style || 2);
+    const label = c.label || '';
+    const emoji = v2EmojiNode(c.emoji);
+    const isLink = style === 5 && c.url;
+    const node = document.createElement(isLink ? 'a' : 'button');
+    node.className = `v2btn ${V2_BTN_CLASS[style] || 'v2btn-secondary'}`;
+    if (emoji) node.appendChild(emoji);
+    if (label) node.appendChild(el('span', '', label));
+    if (!label && !emoji) node.appendChild(el('span', '', 'Button'));
+    if (c.disabled) node.classList.add('v2disabled');
+    if (isLink) {
+        node.href = c.url;
+        node.target = '_blank';
+        node.rel = 'noreferrer noopener';
+    } else {
+        node.disabled = true;
+        node.title = "Bots can't press buttons";
+    }
+    parent.appendChild(node);
+}
+
+function renderV2Select(c, parent) {
+    const d = el('div', 'v2select v2disabled');
+    d.title = "Bots can't use select menus";
+    const ph = el('span', 'v2select-ph', c.placeholder || 'Select an option');
+    d.appendChild(ph);
+    d.appendChild(el('span', 'v2select-arrow', '▾'));
+    parent.appendChild(d);
+}
+
+function renderV2Component(c, parent, msg, isDM) {
+    if (!c || typeof c !== 'object') return;
+    const t = String(c.type != null ? c.type : '').toLowerCase();
+    const is = (n, name) => t === String(n) || t === name;
+    if (is(17, 'container')) {
+        const d = el('div', 'v2container');
+        if (c.accent_color != null) {
+            try {
+                d.style.borderLeftColor = `#${Number(c.accent_color).toString(16).padStart(6, '0')}`;
+            } catch (e) {
+                /* ignore */
+            }
+        }
+        (c.components || []).forEach((k) => renderV2Component(k, d, msg, isDM));
+        if (d.children.length) parent.appendChild(d);
+    } else if (is(1, 'action_row')) {
+        const d = el('div', 'v2row');
+        (c.components || []).forEach((k) => renderV2Component(k, d, msg, isDM));
+        if (d.children.length) parent.appendChild(d);
+    } else if (is(9, 'section')) {
+        const d = el('div', 'v2section');
+        const tx = el('div', 'v2section-text');
+        (c.components || []).forEach((k) => renderV2Component(k, tx, msg, isDM));
+        d.appendChild(tx);
+        if (c.accessory) {
+            const acc = el('div', 'v2accessory');
+            renderV2Component(c.accessory, acc, msg, isDM);
+            d.appendChild(acc);
+        }
+        parent.appendChild(d);
+    } else if (is(10, 'text_display')) {
+        parent.appendChild(v2TextNode(c.content || '', msg, isDM));
+    } else if (is(14, 'separator')) {
+        const hr = document.createElement('hr');
+        hr.className = 'v2sep' + (c.divider === false ? ' v2sep-plain' : '');
+        parent.appendChild(hr);
+    } else if (is(12, 'media_gallery')) {
+        const g = el('div', 'v2gallery');
+        (c.items || []).forEach((it) => {
+            const media = (it && (it.media || it)) || {};
+            if (!media.url) return;
+            const img = document.createElement('img');
+            img.className = 'v2gallery-item';
+            img.src = media.url;
+            img.loading = 'lazy';
+            img.alt = it.description || media.description || '';
+            g.appendChild(img);
+        });
+        if (g.children.length) parent.appendChild(g);
+    } else if (is(11, 'thumbnail')) {
+        const media = c.media || {};
+        if (media.url) {
+            const img = document.createElement('img');
+            img.className = 'v2thumb';
+            img.src = media.url;
+            img.loading = 'lazy';
+            img.alt = c.description || media.description || '';
+            parent.appendChild(img);
+        }
+    } else if (is(13, 'file')) {
+        const f = c.file || c.media || {};
+        if (f.url) {
+            const d = el('div', 'v2file');
+            const a = document.createElement('a');
+            a.href = f.url;
+            a.target = '_blank';
+            a.rel = 'noreferrer noopener';
+            a.textContent = `📎 ${c.name || f.filename || 'file'}`;
+            d.appendChild(a);
+            parent.appendChild(d);
+        }
+    } else if (is(2, 'button')) {
+        renderV2Button(c, parent);
+    } else if (
+        is(3, 'string_select') || is(5, 'user_select') || is(6, 'role_select') ||
+        is(7, 'mentionable_select') || is(8, 'channel_select')
+    ) {
+        renderV2Select(c, parent);
+    } else if (Array.isArray(c.components)) {
+        // forward-compatible: recurse into unknown layout wrappers
+        c.components.forEach((k) => renderV2Component(k, parent, msg, isDM));
+    }
+}
+
+function renderComponentsV2(m, parent, isDM) {
+    const comps = m.components || [];
+    if (!comps.length) return;
+    const wrap = el('div', 'v2wrap');
+    comps.forEach((c) => {
+        try {
+            renderV2Component(c, wrap, m, isDM);
+        } catch (e) {
+            /* ignore one bad component */
+        }
+    });
+    if (wrap.children.length) parent.appendChild(wrap);
+}
+
+function renderPoll(m, parent, isDM) {
+    const poll = m.poll;
+    if (!poll || typeof poll !== 'object') return;
+    const q = (poll.question && (poll.question.text || poll.question)) || '';
+    const answers = poll.answers || poll.results || [];
+    if (!q && !answers.length) return;
+    const box = el('div', 'v2poll');
+    box.appendChild(el('div', 'v2poll-q', `📊 ${q || 'Poll'}`));
+    answers.slice(0, 10).forEach((a) => {
+        const media = a.poll_media || a.media || a;
+        const text = (media && (media.text || media.question)) || a.text || '';
+        if (!text) return;
+        const row = el('div', 'v2poll-a');
+        try {
+            row.innerHTML = Fmt.parseMessage(String(text), m, { isDM });
+        } catch (e) {
+            row.innerText = String(text);
+        }
+        box.appendChild(row);
+    });
+    parent.appendChild(box);
 }
 
 /* ================================ sending ================================ */
@@ -1465,6 +2224,7 @@ async function sendCurrent() {
                     break;
                 }
                 $('msgbox').value = '';
+                syncMentionBackdrop();
                 try {
                     const r = await Api.bulkDelete(S.channel.id, Math.min(num, 100));
                     barry(`Deleted ${r.deleted} message(s).`, 5000);
@@ -1490,10 +2250,12 @@ async function sendCurrent() {
                 break;
         }
         $('msgbox').value = '';
+        syncMentionBackdrop();
     } else {
         await sendText(Fmt.parseSend(text));
         setTimeout(() => {
             $('msgbox').value = '';
+            syncMentionBackdrop();
         }, 1);
     }
     return false;
@@ -1511,6 +2273,7 @@ async function sendText(content, embed) {
             list.scrollTop = list.scrollHeight;
         }
         $('msgbox').value = '';
+        syncMentionBackdrop();
     } catch (e) {
         errorHandler(e);
     }
@@ -1586,6 +2349,11 @@ function messageContextMenu(e, m) {
                 copyText(`https://discord.com/channels/${gid}${m.channel_id}/${m.id}`, 'Link');
             },
         },
+        { label: 'Mention author', fn: () => insertMention(m.author.id) },
+        {
+            label: 'Add reaction…',
+            fn: () => openEmojiPicker(e.clientX, e.clientY, m),
+        },
         { break: true },
     ];
     if (own) {
@@ -1600,6 +2368,7 @@ function messageContextMenu(e, m) {
 
 function userContextMenu(e, u) {
     openRcMenu(e.clientX, e.clientY, [
+        { label: `Mention @${u.username || u.global_name || u.id}`, fn: () => insertMention(u.id) },
         { label: `Copy user ID (${u.id})`, fn: () => copyText(String(u.id), 'User ID') },
         ...(u.avatar ? [{ label: 'Copy avatar URL', fn: () => copyText(u.avatar, 'Avatar URL') }] : []),
     ]);
@@ -1996,6 +2765,10 @@ function wireSocket() {
             (d.ids || []).forEach(removeMessageDom);
         }
     });
+    Api.on('reaction_add', (d) => patchReactionEvent(d, 'add'));
+    Api.on('reaction_remove', (d) => patchReactionEvent(d, 'remove'));
+    Api.on('reaction_clear', (d) => patchReactionEvent(d, 'clear'));
+    Api.on('reaction_clear_emoji', (d) => patchReactionEvent(d, 'clear_emoji'));
     Api.on('typing_start', (d) => {
         noteTyping(d.channel_id, d.user);
     });
@@ -2057,6 +2830,7 @@ function wireSocket() {
 /* ================================= init ================================== */
 
 function wireStaticUI() {
+    ensureMsgWrap();
     $('homeBtn').addEventListener('click', showDMHome);
     $('userPullOutIcon').addEventListener('click', toggleSettings);
 
@@ -2073,8 +2847,10 @@ function wireStaticUI() {
     });
 
     $('msgbox').addEventListener('keydown', (event) => {
+        if (mentionSuggestKey(event)) return;
         if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
+            hideMentionSuggest();
             sendCurrent();
             $('sendmsg').style.height = '38px';
             $('sendmsg').style.transform = '';
@@ -2082,6 +2858,8 @@ function wireStaticUI() {
     });
     $('msgbox').addEventListener('input', () => {
         sendTyping();
+        syncMentionBackdrop();
+        updateMentionSuggest();
         const textElem = $('msgbox');
         const box = $('sendmsg');
         if (textElem.scrollHeight < 38 * 5) {
@@ -2089,6 +2867,10 @@ function wireStaticUI() {
             box.style.height = `${textElem.scrollHeight}px`;
             box.style.transform = `translateY(-${textElem.scrollHeight - 38}px)`;
         }
+    });
+    $('msgbox').addEventListener('click', () => {
+        // re-evaluate @ query on caret moves; close list when clicking away
+        if (!updateMentionSuggest()) hideMentionSuggest();
     });
 
     $('clearCache').addEventListener('click', () => {
@@ -2117,6 +2899,8 @@ function wireStaticUI() {
         if (e.key === 'Escape') {
             closeRcMenu();
             closeEmbedModal();
+            hideMentionSuggest();
+            closeEmojiPicker();
         }
     });
     document.addEventListener('contextmenu', (e) => {

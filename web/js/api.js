@@ -245,6 +245,12 @@ const Api = (() => {
         bulkDelete: (cid, count) => post(`/api/channels/${cid}/bulk-delete`, { count }),
         pinMessage: (cid, mid) => post(`/api/channels/${cid}/pins/${mid}`),
         unpinMessage: (cid, mid) => del(`/api/channels/${cid}/pins/${mid}`),
+        addReaction: (cid, mid, emoji) =>
+            post(`/api/channels/${cid}/messages/${mid}/reactions`, { emoji }),
+        removeReaction: (cid, mid, emoji) =>
+            del(
+                `/api/channels/${cid}/messages/${mid}/reactions?emoji=${encodeURIComponent(emoji)}`
+            ),
         typing: (cid) => post(`/api/channels/${cid}/typing`),
         createInvite: (cid) => post(`/api/channels/${cid}/invites`, {}),
         updateUsername: (username) => patch('/api/me', { username }),

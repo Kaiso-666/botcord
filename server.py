@@ -34,7 +34,7 @@ WEB_DIR = BASE_DIR / "web"
 # Bump whenever the REST/WS contract changes. The site checks this on
 # startup and tells the user to restart / hard-refresh on mismatch
 # instead of hanging on the loader forever.
-SERVER_VERSION = 4
+SERVER_VERSION = 5
 
 log = logging.getLogger("botcord")
 
@@ -167,6 +167,110 @@ def channel_json(c) -> dict:
     }
 
 
+def reaction_json(r) -> dict:
+    """discord.py Reaction -> plain JSON with a stable frontend key."""
+    try:
+        emoji = getattr(r, "emoji", "?")
+        if isinstance(emoji, str):
+            name, eid, animated = emoji, None, False
+        else:
+            name = getattr(emoji, "name", None) or str(emoji)
+            eid = getattr(emoji, "id", None)
+            animated = bool(getattr(emoji, "animated", False))
+        try:
+            count = int(getattr(r, "count", 1) or 1)
+        except Exception:
+            count = 1
+        me = bool(getattr(r, "me", False))
+        key = f"{name}:{eid}" if eid else str(name)
+        url = None
+        if eid:
+            url = (
+                f"https://cdn.discordapp.com/emojis/{eid}."
+                f"{'gif' if animated else 'png'}?v=1"
+            )
+        return {
+            "key": key,
+            "name": str(name),
+            "id": str(eid) if eid else None,
+            "animated": animated,
+            "count": count,
+            "me": me,
+            "url": url,
+        }
+    except Exception:
+        return {
+            "key": "?",
+            "name": "?",
+            "id": None,
+            "animated": False,
+            "count": 1,
+            "me": False,
+            "url": None,
+        }
+
+
+def components_json(m) -> list:
+    """Raw component dicts (Components V2 included) for the browser."""
+    try:
+        comps = getattr(m, "components", None) or []
+        out = []
+        for c in comps:
+            try:
+                d = c.to_dict()
+            except Exception:
+                continue
+            if isinstance(d, dict):
+                out.append(d)
+        return out
+    except Exception:
+        return []
+
+
+def poll_json(m) -> dict | None:
+    try:
+        poll = getattr(m, "poll", None)
+        if poll is None:
+            return None
+        to_dict = getattr(poll, "to_dict", None)
+        if callable(to_dict):
+            d = to_dict()
+            return d if isinstance(d, dict) else None
+        # fallback: minimal fields
+        q = getattr(poll, "question", None)
+        return {
+            "question": str(getattr(q, "text", q or "")),
+            "answers": [
+                {
+                    "id": getattr(a, "id", i),
+                    "text": str(getattr(getattr(a, "media", None), "text", a)),
+                }
+                for i, a in enumerate(getattr(poll, "answers", []) or [])
+            ],
+        }
+    except Exception:
+        return None
+
+
+def reference_json(m) -> dict | None:
+    try:
+        ref = getattr(m, "reference", None)
+        if ref is None:
+            return None
+        mid = getattr(ref, "message_id", None)
+        cid = getattr(ref, "channel_id", None)
+        gid = getattr(ref, "guild_id", None)
+        if not mid and not cid:
+            return None
+        return {
+            "message_id": str(mid) if mid else None,
+            "channel_id": str(cid) if cid else None,
+            "guild_id": str(gid) if gid else None,
+        }
+    except Exception:
+        return None
+
+
 def message_json(m) -> dict:
     try:
         clean = m.clean_content
@@ -225,6 +329,23 @@ def message_json(m) -> dict:
     if edited is not None and edited.tzinfo is None:
         edited = edited.replace(tzinfo=timezone.utc)
     jump_guild = getattr(getattr(m, "guild", None), "id", None)
+    try:
+        reactions = [reaction_json(r) for r in (getattr(m, "reactions", []) or [])]
+    except Exception:
+        reactions = []
+    components = components_json(m)
+    try:
+        flags = getattr(m, "flags", None)
+        flags_value = int(getattr(flags, "value", 0) or 0)
+    except Exception:
+        flags_value = 0
+    try:
+        is_v2 = bool(getattr(getattr(m, "flags", None), "is_components_v2", False))
+    except Exception:
+        is_v2 = False
+    if not is_v2 and components:
+        # flag bit 15 marks Components V2; fall back to shape detection
+        is_v2 = bool(flags_value & (1 << 15))
     return {
         "id": str(m.id),
         "channel_id": str(m.channel.id),
@@ -240,6 +361,12 @@ def message_json(m) -> dict:
         },
         "embeds": embeds,
         "attachments": attachments,
+        "reactions": reactions,
+        "components": components,
+        "flags": flags_value,
+        "is_components_v2": is_v2,
+        "poll": poll_json(m),
+        "reference": reference_json(m),
         "timestamp": created.isoformat() if created else None,
         "edited_timestamp": edited.isoformat() if edited else None,
         "pinned": bool(getattr(m, "pinned", False)),
@@ -327,6 +454,58 @@ class BotcordClient(discord.Client):
                 "guild_id": str(getattr(first.guild, "id", "") or ""),
             },
         )
+
+    def _reaction_payload(self, reaction, user):
+        msg = getattr(reaction, "message", None)
+        try:
+            count = int(getattr(reaction, "count", 1) or 1)
+        except Exception:
+            count = 1
+        return {
+            "message_id": str(getattr(msg, "id", "") or ""),
+            "channel_id": str(getattr(getattr(msg, "channel", None), "id", "") or ""),
+            "guild_id": str(getattr(getattr(msg, "guild", None), "id", "") or ""),
+            "emoji": reaction_json(reaction),
+            "user": user_json(user) if user is not None else None,
+            "count": count,
+        }
+
+    async def on_reaction_add(self, reaction, user):
+        try:
+            await self.state.broadcast(
+                "reaction_add", self._reaction_payload(reaction, user)
+            )
+        except Exception as exc:
+            log.warning("reaction_add broadcast failed: %r", exc)
+
+    async def on_reaction_remove(self, reaction, user):
+        try:
+            await self.state.broadcast(
+                "reaction_remove", self._reaction_payload(reaction, user)
+            )
+        except Exception as exc:
+            log.warning("reaction_remove broadcast failed: %r", exc)
+
+    async def on_reaction_clear(self, message, reactions):
+        try:
+            await self.state.broadcast(
+                "reaction_clear",
+                {
+                    "message_id": str(message.id),
+                    "channel_id": str(message.channel.id),
+                    "guild_id": str(getattr(message.guild, "id", "") or ""),
+                },
+            )
+        except Exception as exc:
+            log.warning("reaction_clear broadcast failed: %r", exc)
+
+    async def on_reaction_clear_emoji(self, reaction):
+        try:
+            payload = self._reaction_payload(reaction, None)
+            payload.pop("user", None)
+            await self.state.broadcast("reaction_clear_emoji", payload)
+        except Exception as exc:
+            log.warning("reaction_clear_emoji broadcast failed: %r", exc)
 
     async def on_typing(self, channel, user, when):
         if self.user and user.id == self.user.id:
@@ -1094,6 +1273,65 @@ async def api_unpin_message(request):
         return web.json_response({"error": "MISSING-PERMISSIONS"}, status=403)
     except discord.HTTPException as exc:
         return web.json_response({"error": f"UNPIN-FAILED: {exc}"}, status=502)
+    return web.json_response({"ok": True})
+
+
+@routes.post("/api/channels/{cid}/messages/{mid}/reactions")
+async def api_add_reaction(request):
+    client = require_bot(request)
+    channel = get_text_channel(client, request.match_info["cid"])
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    emoji = (body.get("emoji") or "").strip() if isinstance(body, dict) else ""
+    if not emoji:
+        return web.json_response({"error": "BAD-EMOJI"}, status=400)
+    try:
+        msg = await channel.fetch_message(int(request.match_info["mid"]))
+    except (ValueError, discord.NotFound):
+        return web.json_response({"error": "UNKNOWN-MESSAGE"}, status=404)
+    except discord.Forbidden:
+        return web.json_response({"error": "MISSING-ACCESS"}, status=403)
+    try:
+        await msg.add_reaction(emoji)
+    except discord.Forbidden:
+        return web.json_response({"error": "MISSING-PERMISSIONS"}, status=403)
+    except discord.HTTPException as exc:
+        return web.json_response(
+            {"error": f"REACTION-FAILED: {exc}"}, status=502
+        )
+    return web.json_response({"ok": True})
+
+
+@routes.delete("/api/channels/{cid}/messages/{mid}/reactions")
+async def api_remove_reaction(request):
+    client = require_bot(request)
+    channel = get_text_channel(client, request.match_info["cid"])
+    emoji = (request.query.get("emoji") or "").strip()
+    if not emoji:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if isinstance(body, dict):
+            emoji = (body.get("emoji") or "").strip()
+    if not emoji:
+        return web.json_response({"error": "BAD-EMOJI"}, status=400)
+    try:
+        msg = await channel.fetch_message(int(request.match_info["mid"]))
+    except (ValueError, discord.NotFound):
+        return web.json_response({"error": "UNKNOWN-MESSAGE"}, status=404)
+    except discord.Forbidden:
+        return web.json_response({"error": "MISSING-ACCESS"}, status=403)
+    try:
+        await msg.remove_reaction(emoji, client.user)
+    except discord.Forbidden:
+        return web.json_response({"error": "MISSING-PERMISSIONS"}, status=403)
+    except discord.HTTPException as exc:
+        return web.json_response(
+            {"error": f"REACTION-FAILED: {exc}"}, status=502
+        )
     return web.json_response({"ok": True})
 
 

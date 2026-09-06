@@ -115,6 +115,12 @@ silently. The usual causes:
 * Message history (100), grouped rendering, markdown / spoilers /
   code blocks / unicode + custom emoji, mentions, embeds, attachments
 * Sending, inline edit, delete, pin/unpin, purge (`/purge <n>`)
+* Discord-style mentions: Shift+Click a name/avatar/member (or type `@`
+  for autocomplete) — shows `@Name` pills, sends `<@id>` so it pings
+* Reactions: view, toggle by clicking, add via right-click → Add reaction
+  (unicode + server emoji), realtime gateway updates
+* Message Components V2 + polls rendered (buttons/selects shown disabled —
+  bots can't press each other's components; link buttons open normally)
 * Realtime via WebSocket: new / edited / deleted messages, typing
   indicator, member join/leave, presence, guild add/remove
 * Member list (online/offline), user card
@@ -164,6 +170,8 @@ stores it automatically); without it the API answers `NO-SESSION`.
 | DELETE | `/api/channels/{id}/messages/{mid}` | — |
 | POST | `/api/channels/{id}/bulk-delete` | `{count}` (purge) |
 | POST/DELETE | `/api/channels/{id}/pins/{mid}` | pin / unpin |
+| POST | `/api/channels/{id}/messages/{mid}/reactions` | `{emoji}` — bot adds a reaction |
+| DELETE | `/api/channels/{id}/messages/{mid}/reactions?emoji=` | bot removes its own reaction |
 | POST | `/api/channels/{id}/typing` | trigger typing |
 | POST | `/api/channels/{id}/invites` | create invite → `{code, url}` |
 | PATCH | `/api/me` | `{username}` |
@@ -171,7 +179,8 @@ stores it automatically); without it the API answers `NO-SESSION`.
 
 WebSocket `/ws?session=…` (server → browser `{t, d}`):
 `hello`, `ready`, `message_create`, `message_update`,
-`message_delete`, `message_delete_bulk`, `typing_start`,
+`message_delete`, `message_delete_bulk`, `reaction_add`,
+`reaction_remove`, `reaction_clear`, `reaction_clear_emoji`, `typing_start`,
 `guild_create`, `guild_delete`, `member_add`, `member_remove`,
 `presence_update`, `login_error`, `disconnected`.
 Browser → server: `{t:"ping"}` keep-alive (→ `{t:"pong"}`).

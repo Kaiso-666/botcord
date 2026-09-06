@@ -116,6 +116,16 @@ const Fmt = (() => {
         return id;
     }
 
+    function chanName(id) {
+        const c = lookup.channels[String(id)];
+        return c ? c.name : null;
+    }
+
+    function roleName(id) {
+        const r = lookup.roles[String(id)];
+        return r ? r.name : null;
+    }
+
     // clean_content style: "@Name" / "#channel" plain text matched against
     // the message's mention lists + cached guild data.
     function formatPings(msg, text, isDM) {
@@ -289,6 +299,9 @@ const Fmt = (() => {
 
     return {
         setLookup,
+        displayNameFor,
+        chanName,
+        roleName,
         parseHTML,
         parseLinks,
         parseStyling,
