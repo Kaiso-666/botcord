@@ -1,0 +1,174 @@
+/* Copyright 2017 Sebastian Ouellette
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License. */
+
+#channel-list {
+    font-family: Whitney, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    height: calc(100% - 90px);
+    margin-left: 50px;
+    margin-top: 40px;
+    width: 250px;
+    padding-left: 10px;
+    padding-top: 10px;
+    padding-bottom: -10px;
+    background-color: #2f3136;
+    color: #606266;
+    overflow-y: auto;
+    overflow-x: hidden;
+    font-weight: 100;
+}
+
+#channel-list::-webkit-scrollbar {
+    background-color: transparent;
+    width: 6px;
+}
+
+#channel-list::-webkit-scrollbar-track {
+    background-color: transparent;
+}
+
+#channel-list::-webkit-scrollbar-thumb {
+    background-color: #25272b;
+    border-radius: 3px;
+}
+
+.categoryNameContainer {
+    display: block;
+}
+
+.categoryText {
+    /* font-variant: small-caps; */
+    text-transform: uppercase;
+    user-select: none;
+    padding: 15px 0 0 0 !important;
+    height: 20px;
+    font-size: 12px;
+    font-weight: bold;
+
+    transform: translateY(5px) !important;
+}
+
+.categoryNameContainer {
+    cursor: pointer;
+}
+
+.categoryNameContainer:hover .categoryText {
+    color: #b4b8bc;
+}
+
+.categorySVG {
+    height: 10px;
+    position: relative;
+    top: 5px;
+    margin-right: 8px;
+    transform: rotate(90deg);
+    transition-duration: 0.1s;
+}
+
+.open .categorySVG {
+    transform: rotate(180deg);
+}
+
+.GuildNews {
+    height: 18px !important;
+    width: 18px !important;
+    padding: 1px;
+}
+
+.channelContainer {
+    display: none;
+}
+
+.open .channelContainer {
+    display: block;
+}
+
+.channel {
+    user-select: none;
+    margin: 2px 0 0 -5px;
+}
+
+.GuildVoice {
+    user-select: none;
+    margin-left: -5px;
+}
+
+h5 {
+    font-weight: 100;
+    font-size: 16px;
+}
+
+.channelSVG {
+    height: 20px;
+    width: 20px;
+    display: inline-box;
+    transform: translateY(-9px);
+}
+
+#channel-elements h5 {
+    transform: translateY(-5px);
+    display: inline-block;
+    margin: 0 !important;
+    padding: 7px 0 7px 10px;
+}
+
+.channel {
+    /* margin: 0 0 0 20px; */
+    padding: 5px 10px;
+    cursor: pointer;
+    border-radius: 3px;
+    height: 25px;
+}
+
+.channel:hover {
+    background-color: #34373c;
+    color: #b4b8bc;
+}
+
+/* Channel ... formatting */
+.channel h5 {
+    max-width: calc(100% - 30px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.selectedChan {
+    background-color: #393c43 !important;
+    color: white !important;
+}
+
+.channel.newMsg {
+    color: white !important;
+}
+
+.blocked {
+    cursor: not-allowed;
+    /* color: #904d3c; */
+    color: #fc5c65;
+}
+
+.blocked h5 {
+    opacity: 0.35;
+}
+
+.blocked:hover {
+    color: #fc5c65;
+    /* background-color: #4d4040; */
+    background-color: #3c3434;
+}
+
+.blocked:hover h5 {
+    opacity: 1;
+}

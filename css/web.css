@@ -1,0 +1,284 @@
+/* Botcord web-only additions. Everything else is reused from the desktop CSS. */
+
+.hidden {
+    display: none !important;
+}
+
+#connStatus {
+    float: right;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: 10px;
+    height: 100%;
+}
+
+#connDot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ed4245;
+    display: inline-block;
+}
+
+#connDot.online {
+    background: #57f287;
+}
+
+#connDot.connecting {
+    background: #fee75c;
+}
+
+#connText {
+    font-size: 12px;
+    letter-spacing: 1px;
+}
+
+#latency {
+    font-size: 11px;
+    color: #72767d;
+    letter-spacing: 0;
+}
+
+#splashSub {
+    color: #b4b8bc;
+    margin-top: -10px;
+    margin-bottom: 10px;
+}
+
+#toast {
+    position: fixed;
+    bottom: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #ed4245;
+    color: #fff;
+    padding: 10px 18px;
+    border-radius: 6px;
+    z-index: 9999;
+    font-size: 14px;
+    max-width: 80vw;
+}
+
+#embedModal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 9000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#embedModalBox {
+    background: #2f3136;
+    border-radius: 8px;
+    padding: 20px;
+    width: min(480px, 90vw);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+#embedModalBox h3 {
+    color: #fff;
+    margin: 0 0 6px 0;
+}
+
+#embedModalBox input,
+#embedModalBox textarea {
+    background: #202225;
+    border: 1px solid #040405;
+    border-radius: 4px;
+    color: #dcddde;
+    padding: 8px;
+    font-size: 14px;
+    resize: vertical;
+}
+
+#embedModalBtns {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+#embedModalBtns button {
+    background: #5865f2;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 16px;
+    cursor: pointer;
+}
+
+#embedModalBtns #embedCancel {
+    background: #4f545c;
+}
+
+.splashError {
+    color: #ed4245;
+    margin-top: 8px;
+    font-size: 14px;
+}
+
+/* Mobile-only toggle buttons (hidden on desktop) */
+.mobileOnly {
+    display: none;
+}
+
+/* ============================ mobile layout =============================
+ * Desktop keeps the 3-column layout. On small screens the message view
+ * takes the full width and the channel / member lists become slide-over
+ * drawers toggled from the server header.
+ */
+@media (max-width: 860px) {
+    html,
+    body {
+        overflow-x: hidden;
+        overscroll-behavior-y: none;
+    }
+
+    .mobileOnly {
+        display: inline-flex;
+    }
+
+    /* use dynamic viewport height so the mobile URL bar doesn't jump */
+    #main {
+        height: calc(100vh - 20px);
+        height: calc(100dvh - 20px);
+    }
+
+    /* server header spans the width next to the guild rail */
+    #serverName {
+        margin-left: 50px;
+        width: calc(100vw - 50px);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    #guildName {
+        flex: 1;
+        min-width: 0;
+        padding-left: 4px;
+    }
+
+    #chanToggle,
+    #memberToggle {
+        background: transparent;
+        border: none;
+        color: #b4b8bc;
+        font-size: 20px;
+        cursor: pointer;
+        padding: 4px 8px;
+        align-items: center;
+        justify-content: center;
+        min-width: 44px;
+        min-height: 40px;
+    }
+
+    #guildImg {
+        position: static;
+        margin: 0 4px 0 0;
+        height: 28px;
+    }
+
+    #serverName .members {
+        display: none;
+    }
+
+    /* channel list becomes a left drawer */
+    #channel-list {
+        position: fixed;
+        left: 50px;
+        top: 60px;
+        bottom: 0;
+        margin: 0;
+        height: auto;
+        width: min(300px, 80vw);
+        z-index: 500;
+        transform: translateX(-110%);
+        transition: transform 0.25s ease;
+        box-shadow: 4px 0 12px rgba(0, 0, 0, 0.5);
+    }
+
+    body.show-channels #channel-list {
+        transform: none;
+    }
+
+    /* message view takes the freed space */
+    #message-list {
+        margin-left: 50px;
+        width: calc(100vw - 50px);
+        height: calc(100vh - 80px);
+        height: calc(100dvh - 80px);
+        margin-top: calc(-100vh + 60px);
+        margin-top: calc(-100dvh + 60px);
+    }
+
+    #sendmsg {
+        margin-left: 50px;
+        width: calc(100vw - 50px);
+    }
+
+    /* member list becomes a right drawer */
+    #memberBar {
+        position: fixed;
+        right: 0;
+        top: 60px;
+        bottom: 0;
+        margin: 0;
+        height: auto;
+        width: min(260px, 80vw);
+        z-index: 500;
+        transform: translateX(110%);
+        transition: transform 0.25s ease;
+        box-shadow: -4px 0 12px rgba(0, 0, 0, 0.5);
+    }
+
+    body.show-members #memberBar {
+        transform: none;
+    }
+
+    /* user card + settings fit the narrow screen */
+    #userSettings {
+        margin-left: 50px;
+        width: calc(100vw - 50px);
+        max-width: 340px;
+    }
+
+    .settingsPopup {
+        left: 0 !important;
+        width: calc(100vw - 130px) !important;
+        max-width: 420px;
+        max-height: 55vh;
+        max-height: 55dvh;
+        overflow-y: auto;
+    }
+
+    /* comfortable touch targets */
+    .channel,
+    .dmChannel {
+        min-height: 40px;
+        display: flex;
+        align-items: center;
+    }
+
+    .optionCategory {
+        min-height: 44px;
+    }
+
+    #embedModalBox {
+        max-height: 90vh;
+        max-height: 90dvh;
+        overflow-y: auto;
+    }
+
+    #splashScreen {
+        overflow-y: auto;
+    }
+
+    #rcMenu {
+        max-width: 80vw;
+    }
+}

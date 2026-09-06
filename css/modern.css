@@ -1,0 +1,1065 @@
+/* Botcord modern layout — overrides the 2017-era absolute-positioned CSS.
+ * Loaded LAST so these rules win. Keeps all JS hooks (IDs/classes) intact,
+ * but replaces the fragile calc(100vw-...) hacks with a proper grid.
+ */
+
+:root {
+    --bg-base: #1e1f22;
+    --bg-rail: #1e1f22;
+    --bg-sidebar: #2b2d31;
+    --bg-chat: #313338;
+    --bg-input: #383a40;
+    --bg-hover: #35373c;
+    --bg-active: #3f4248;
+    --bg-user: #232428;
+    --border-subtle: #1f2124;
+    --text-normal: #dbdee1;
+    --text-muted: #949ba4;
+    --text-faint: #6d6f78;
+    --brand: #5865f2;
+    --brand-hover: #4752c4;
+    --green: #57f287;
+    --yellow: #fee75c;
+    --red: #ed4245;
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --font: "gg sans", Whitney, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg-base);
+    color: var(--text-normal);
+    font-family: var(--font);
+    overflow: hidden;
+}
+
+body {
+    font-size: 15px;
+    line-height: 1.35;
+}
+
+p {
+    font-size: 15px;
+    color: var(--text-normal);
+}
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: #1a1b1e;
+    border-radius: 4px;
+}
+
+/* ---------- top bar ---------- */
+#titlebar {
+    height: 36px !important;
+    width: 100vw !important;
+    margin: 0 !important;
+    background: var(--bg-rail) !important;
+    border-bottom: 1px solid #111214;
+    display: flex !important;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    box-sizing: border-box;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 600;
+}
+
+#titlebar span {
+    font-family: var(--font) !important;
+    font-size: 13px !important;
+    font-weight: 700;
+    letter-spacing: 0.5px !important;
+    color: var(--text-normal) !important;
+    margin-left: 4px !important;
+}
+
+/* ---------- app grid ---------- */
+#main {
+    position: fixed !important;
+    inset: 36px 0 0 0 !important;
+    height: auto !important;
+    display: grid !important;
+    grid-template-columns: 72px 240px minmax(0, 1fr) 240px;
+    grid-template-rows: 48px minmax(0, 1fr) auto;
+    grid-template-areas:
+        "guilds server chat members"
+        "guilds channels chat members"
+        "guilds user chat members";
+    background: var(--bg-chat);
+}
+
+/* ---------- guild rail ---------- */
+#guild-list {
+    grid-area: guilds !important;
+    width: 72px !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 12px 0 !important;
+    position: static !important;
+    background: var(--bg-rail) !important;
+    display: flex !important;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+}
+
+.homeBreak {
+    width: 32px;
+    height: 2px !important;
+    border-radius: 1px;
+    background: #35363c !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+}
+
+.guildIconDiv {
+    width: 48px !important;
+    display: flex !important;
+    justify-content: center;
+    position: relative;
+    cursor: pointer;
+}
+
+.guild-icon,
+#guild-list .guild-icon,
+#homeBtn .guild-icon {
+    width: 48px !important;
+    height: 48px !important;
+    min-width: 48px;
+    margin: 0 !important;
+    border-radius: 50% !important;
+    background: var(--bg-sidebar);
+    object-fit: cover;
+    transition: border-radius 0.15s ease, background 0.15s ease !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.guildIconDiv:hover .guild-icon,
+.guild-icon:hover {
+    border-radius: 16px !important;
+    background: var(--brand);
+}
+
+.guild-icon.selectedGuild {
+    border-radius: 16px !important;
+}
+
+#guildAbrev {
+    position: static !important;
+    width: auto !important;
+    font-size: 15px !important;
+    font-weight: 600;
+}
+
+#guildIndicator {
+    position: absolute !important;
+    left: -12px !important;
+    margin: 0 !important;
+    width: 4px !important;
+    height: 40px !important;
+    background: #fff !important;
+    border-radius: 0 4px 4px 0 !important;
+}
+
+.guildNameContainer {
+    position: fixed !important;
+    margin: 0 !important;
+    height: auto !important;
+    padding: 8px 12px !important;
+    background: #111214 !important;
+    border-radius: 6px !important;
+    visibility: hidden;
+    z-index: 9000;
+    pointer-events: none;
+    transform: translate(60px, 8px);
+}
+
+.guildNameContainer::before {
+    display: none !important;
+}
+
+.guildName {
+    color: #fff !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    line-height: 1.2 !important;
+    margin: 0 !important;
+    white-space: nowrap;
+}
+
+.guildIconDiv:hover .guildNameContainer {
+    visibility: visible;
+}
+
+/* ---------- server header ---------- */
+#serverName {
+    grid-area: server !important;
+    width: auto !important;
+    height: 48px !important;
+    margin: 0 !important;
+    position: static !important;
+    background: var(--bg-sidebar) !important;
+    border-bottom: 1px solid var(--border-subtle);
+    border-radius: 0 !important;
+    display: flex !important;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px !important;
+    box-sizing: border-box;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    z-index: 2;
+}
+
+#guildName {
+    flex: 1;
+    min-width: 0;
+    padding: 0 !important;
+    margin: 0 !important;
+    color: #fff !important;
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    width: auto !important;
+}
+
+#guildName.directMsg {
+    transform: none !important;
+}
+
+#guildImg {
+    position: static !important;
+    margin: 0 !important;
+    height: 24px !important;
+    width: 24px !important;
+    border-radius: 50%;
+    order: 3;
+}
+
+#serverName .members {
+    display: none !important;
+}
+
+/* ---------- channel sidebar ---------- */
+#channel-list {
+    grid-area: channels !important;
+    height: auto !important;
+    min-height: 0;
+    width: auto !important;
+    margin: 0 !important;
+    padding: 8px !important;
+    position: static !important;
+    background: var(--bg-sidebar) !important;
+    color: var(--text-muted) !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+}
+
+.category {
+    margin-bottom: 4px;
+}
+
+.categoryNameContainer {
+    display: flex !important;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 4px 4px !important;
+    cursor: pointer;
+}
+
+.categoryText {
+    padding: 0 !important;
+    margin: 0 !important;
+    height: auto !important;
+    transform: none !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.5px;
+    color: var(--text-muted) !important;
+}
+
+.categorySVG {
+    height: 8px !important;
+    top: auto !important;
+    margin: 0 !important;
+    opacity: 0.7;
+}
+
+.channel,
+.dmChannel {
+    display: flex !important;
+    align-items: center;
+    gap: 6px;
+    height: auto !important;
+    min-height: 32px !important;
+    margin: 1px 0 !important;
+    padding: 6px 8px !important;
+    border-radius: var(--radius-sm) !important;
+    cursor: pointer;
+    color: var(--text-muted) !important;
+    box-sizing: border-box;
+}
+
+.channel:hover,
+.dmChannel:hover {
+    background: var(--bg-hover) !important;
+    color: var(--text-normal) !important;
+}
+
+.selectedChan {
+    background: var(--bg-active) !important;
+    color: #fff !important;
+}
+
+.channelSVG {
+    height: 18px !important;
+    width: 18px !important;
+    transform: none !important;
+    flex-shrink: 0;
+    opacity: 0.8;
+}
+
+#channel-elements h5,
+.dmChannel h5,
+.channel h5 {
+    transform: none !important;
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: 15px !important;
+    font-weight: 500 !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100% !important;
+}
+
+.dmChannelImage {
+    height: 24px !important;
+    width: 24px !important;
+    border-radius: 50%;
+    margin: 0 !important;
+    flex-shrink: 0;
+}
+
+/* ---------- user footer ---------- */
+#userSettings {
+    grid-area: user !important;
+    position: static !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 52px;
+    margin: 0 !important;
+    background: var(--bg-user) !important;
+    z-index: 2;
+}
+
+#userCard {
+    height: 52px !important;
+    margin: 0 !important;
+    border: none !important;
+    display: flex !important;
+    align-items: center;
+    gap: 8px;
+    padding: 0 8px !important;
+    box-sizing: border-box;
+}
+
+#userCardBot {
+    position: static !important;
+    margin: 0 !important;
+    font-size: 10px !important;
+    font-weight: 700;
+    padding: 3px 5px !important;
+    order: 3;
+}
+
+#userCardIcon {
+    margin: 0 !important;
+    height: 32px !important;
+    width: 32px !important;
+    border-radius: 50%;
+}
+
+#userCardName {
+    position: static !important;
+    margin: 0 !important;
+    width: auto !important;
+    flex: 1;
+    min-width: 0;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    color: #fff !important;
+}
+
+#userCardDiscrim {
+    display: none !important;
+}
+
+#userPullOutIcon {
+    margin: 0 !important;
+    float: none !important;
+}
+
+/* ---------- chat column ---------- */
+#msgSpace {
+    grid-area: chat !important;
+    display: flex !important;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    background: var(--bg-chat);
+}
+
+#message-list {
+    position: static !important;
+    flex: 1;
+    min-height: 0;
+    width: auto !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 16px 16px 8px !important;
+    background: var(--bg-chat) !important;
+    border: none !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding-bottom: 16px !important;
+}
+
+.sorryNoLoad {
+    color: var(--text-faint) !important;
+    font-size: 13px;
+    margin-bottom: 12px;
+}
+
+/* ---------- messages (no more negative-margin hacks) ---------- */
+.messageCont {
+    width: 100% !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 12px 0 0 !important;
+    overflow: visible !important;
+}
+
+.messageCont.timeSeparated {
+    border-top: 1px solid #3f4147;
+    padding-top: 12px !important;
+}
+
+.messageBlock {
+    display: grid !important;
+    grid-template-columns: 40px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    column-gap: 12px;
+    padding: 2px 8px 2px 4px !important;
+    border-radius: 6px;
+    position: static !important;
+}
+
+.messageBlock:hover {
+    background: #2e3035 !important;
+}
+
+.messageBlock.firstmsg {
+    padding-top: 4px !important;
+    padding-bottom: 4px !important;
+}
+
+.messageImg {
+    grid-row: 1 / span 2;
+    height: 40px !important;
+    width: 40px !important;
+    position: static !important;
+    left: auto !important;
+    border-radius: 50%;
+    margin-top: 2px;
+    cursor: pointer;
+}
+
+.messageBlock:not(.firstmsg) .messageImg,
+.messageBlock:not(.firstmsg) .messageUsername,
+.messageBlock:not(.firstmsg) .messageTimestamp {
+    display: none;
+}
+
+.messageBlock:not(.firstmsg) {
+    grid-template-columns: minmax(0, 1fr);
+    padding-left: 56px !important;
+}
+
+.messageBlock:not(.firstmsg):hover {
+    background: #2e3035 !important;
+}
+
+.messageUsername {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    display: inline !important;
+    margin: 0 8px 0 0 !important;
+    font-size: 15px !important;
+    font-weight: 600 !important;
+    cursor: pointer;
+}
+
+.messageTimestamp {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    display: inline !important;
+    margin: 0 !important;
+    font-size: 11px !important;
+    color: var(--text-faint) !important;
+}
+
+.messageText {
+    grid-column: 2;
+    width: auto !important;
+    max-width: 100%;
+    font-size: 15px !important;
+    line-height: 1.4;
+    padding: 1px 0 !important;
+    margin: 0 !important;
+    color: var(--text-normal) !important;
+    word-spacing: normal !important;
+    overflow-wrap: anywhere;
+}
+
+.messageBlock:not(.firstmsg) .messageText {
+    grid-column: 1;
+}
+
+.messageTimestamp + .messageText,
+.messageTimestamp + .embed {
+    margin-top: 0 !important;
+}
+
+.inlineMsgCont {
+    margin: 0 !important;
+    grid-column: 2;
+}
+
+.barryImg {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+}
+
+/* ---------- input ---------- */
+#sendmsg {
+    position: static !important;
+    width: auto !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 16px 20px !important;
+    z-index: 2;
+}
+
+#sendmsg::before {
+    display: none !important;
+}
+
+#messageBar {
+    width: auto !important;
+    height: auto !important;
+    min-height: 44px;
+    margin: 0 !important;
+    padding: 0 12px 0 0 !important;
+    background: var(--bg-input) !important;
+    border-radius: var(--radius-md) !important;
+    display: flex !important;
+    align-items: center;
+}
+
+#msgbox {
+    background: transparent !important;
+    padding: 11px 12px !important;
+    font-size: 15px !important;
+    line-height: 1.35;
+    max-height: 40vh;
+}
+
+#msgMisc {
+    margin: 0 !important;
+    display: flex !important;
+    align-items: center;
+    gap: 4px;
+}
+
+#typingIndicator {
+    position: static !important;
+    margin: 6px 0 0 4px !important;
+    left: auto !important;
+    font-size: 12px !important;
+    color: var(--text-muted) !important;
+    min-height: 16px;
+}
+
+#typingDots {
+    display: none !important;
+}
+
+/* ---------- member list ---------- */
+#memberBar {
+    grid-area: members !important;
+    height: auto !important;
+    min-height: 0;
+    width: auto !important;
+    margin: 0 !important;
+    padding: 12px 8px !important;
+    position: static !important;
+    background: var(--bg-sidebar) !important;
+    overflow-y: auto !important;
+}
+
+.roleContainer {
+    margin: 0 0 16px !important;
+}
+
+.roleTitle {
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.5px;
+    padding: 0 8px 4px;
+    display: block;
+}
+
+.mLOuterDiv {
+    margin: 0 !important;
+}
+
+.mLUserDiv {
+    display: flex !important;
+    align-items: center;
+    gap: 10px;
+    margin: 0 !important;
+    padding: 5px 8px !important;
+    border-radius: var(--radius-sm);
+}
+
+.mLIcon {
+    height: 32px !important;
+    width: 32px !important;
+    margin: 0 !important;
+    flex-shrink: 0;
+    border-radius: 50%;
+    -webkit-mask-image: none !important;
+    mask-image: none !important;
+}
+
+.mLUsername {
+    margin: 0 !important;
+    padding: 0 !important;
+    transform: none !important;
+    font-size: 15px !important;
+    font-weight: 500 !important;
+    max-width: 100% !important;
+}
+
+/* ---------- embeds / code / mentions ---------- */
+.embed {
+    background: #2b2d31 !important;
+    border-left: 4px solid var(--brand) !important;
+    border-radius: var(--radius-sm) !important;
+    max-width: 520px !important;
+    margin: 4px 0 !important;
+    grid-column: 2;
+}
+
+.messageBlock:not(.firstmsg) .embed {
+    grid-column: 1;
+}
+
+.codeBlock {
+    background: #1e1f22 !important;
+    border: 1px solid #111214 !important;
+    border-radius: 6px !important;
+    padding: 10px !important;
+    width: auto !important;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.inlineCodeBlock {
+    background: #1e1f22 !important;
+    border-radius: 4px !important;
+    padding: 1px 5px !important;
+}
+
+.ping {
+    background: rgba(88, 101, 242, 0.25) !important;
+    color: #c9cdfb !important;
+    border-radius: 3px;
+    padding: 0 4px !important;
+}
+
+.ping:hover {
+    background: var(--brand) !important;
+    color: #fff !important;
+}
+
+.previewImage,
+.embedImage {
+    max-width: 100% !important;
+    border-radius: var(--radius-md) !important;
+}
+
+/* ---------- menus / modals / toast ---------- */
+#rcMenu {
+    background: #111214 !important;
+    border: 1px solid #1f2124;
+    border-radius: var(--radius-md) !important;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    min-width: 180px;
+    width: auto !important;
+    padding: 6px !important;
+}
+
+.rcOption {
+    font-size: 14px !important;
+    font-weight: 500;
+    padding: 8px 10px !important;
+    margin: 0 !important;
+    border-radius: var(--radius-sm) !important;
+}
+
+.rcOption:hover {
+    background: var(--brand) !important;
+}
+
+#toast {
+    bottom: 80px !important;
+    background: #111214 !important;
+    border: 1px solid #2b2d31;
+    border-radius: var(--radius-md) !important;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+#embedModalBox {
+    background: var(--bg-sidebar) !important;
+    border: 1px solid #1f2124;
+    border-radius: 12px !important;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+}
+
+/* ---------- settings panel: modal instead of flyout hack ---------- */
+#optionGroups {
+    background: var(--bg-user) !important;
+}
+
+.settingsPopup {
+    position: fixed !important;
+    left: 50% !important;
+    top: 50% !important;
+    transform: translate(-50%, -50%);
+    width: min(560px, calc(100vw - 48px)) !important;
+    max-height: min(70vh, 640px);
+    padding: 20px 24px !important;
+    padding-bottom: 24px !important;
+    background: var(--bg-sidebar) !important;
+    border: 1px solid #1f2124;
+    border-radius: 12px !important;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+    overflow-y: auto !important;
+    z-index: 9500 !important;
+}
+
+.toggledOn + .settingsPopup {
+    left: 50% !important;
+    display: block !important;
+}
+
+.settingsUpdateBtn {
+    background: var(--brand) !important;
+    border-radius: 6px !important;
+    font-weight: 600;
+    transform: none !important;
+    margin: 12px 0 0 !important;
+    width: 100% !important;
+}
+
+.settingsUpdateBtn:hover {
+    background: var(--brand-hover) !important;
+}
+
+/* ---------- splash / login ---------- */
+#splashScreen {
+    margin: 0 !important;
+    background: radial-gradient(1200px 600px at 50% -10%, #2b2f6b 0%, var(--bg-base) 55%) !important;
+    display: flex !important;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 8vh 20px 40px !important;
+    box-sizing: border-box;
+    overflow-y: auto !important;
+}
+
+#splashScreen h1 {
+    margin: 18px 0 4px !important;
+    font-size: clamp(40px, 6vw, 64px) !important;
+    font-weight: 800;
+    letter-spacing: -1px;
+    order: 1;
+}
+
+#splashSub {
+    order: 2;
+    margin: 0 0 20px !important;
+    font-size: 16px;
+}
+
+#splashLoading {
+    order: 0;
+    margin: 0 !important;
+    width: auto !important;
+    height: 40px !important;
+    display: flex !important;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 8px;
+}
+
+.loadingCircle {
+    margin: 0 !important;
+    transform: none !important;
+    height: 10px !important;
+    width: 10px !important;
+    background: var(--brand) !important;
+    animation-name: modernLoadingDot !important;
+    animation-duration: 1.2s !important;
+}
+
+@keyframes modernLoadingDot {
+    0%,
+    60%,
+    100% {
+        transform: translateY(0) !important;
+        opacity: 0.4;
+    }
+    30% {
+        transform: translateY(-12px) !important;
+        opacity: 1;
+    }
+}
+
+#loadingBar {
+    order: 3;
+    width: min(420px, 80vw) !important;
+    margin: 8px auto 0 !important;
+}
+
+#loadingIncomplete {
+    background: #35363c !important;
+    height: 8px !important;
+    border-radius: 4px !important;
+}
+
+#loadingComplete {
+    background: var(--brand) !important;
+    height: 8px !important;
+    top: -8px !important;
+    border-radius: 4px !important;
+    transition-duration: 300ms !important;
+}
+
+#percentageText {
+    order: 4;
+    margin-top: 12px;
+    font-size: 14px;
+    color: var(--text-muted) !important;
+}
+
+#selectMember {
+    order: 5;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 20px 0 0 !important;
+    overflow: visible !important;
+    display: flex;
+    justify-content: center;
+}
+
+.splashTokenContainer {
+    width: min(420px, calc(100vw - 40px)) !important;
+    margin: 0 !important;
+    background: rgba(17, 18, 20, 0.7);
+    border: 1px solid #2b2d31;
+    border-radius: 12px;
+    padding: 20px !important;
+    box-sizing: border-box;
+    display: flex !important;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.splashScreenToken {
+    background: #1e1f22 !important;
+    border: 1px solid #111214 !important;
+    border-radius: var(--radius-md) !important;
+    padding: 12px !important;
+    margin: 0 !important;
+    width: 100% !important;
+    box-sizing: border-box;
+    font-size: 15px !important;
+}
+
+.splashScreenToken:focus {
+    border-color: var(--brand) !important;
+}
+
+.tokenAddButton {
+    width: auto !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 11px !important;
+    background: var(--brand) !important;
+    border-radius: var(--radius-md) !important;
+    font-size: 15px !important;
+    font-weight: 600;
+}
+
+.tokenAddButton:hover {
+    background: var(--brand-hover) !important;
+    border-radius: var(--radius-md) !important;
+}
+
+#stuckLoadingCont {
+    position: absolute !important;
+    float: none !important;
+    right: 16px !important;
+    top: 12px !important;
+    width: auto !important;
+    z-index: 5;
+}
+
+#stuckLoadingCont h2 {
+    font-size: 13px !important;
+    font-weight: 600;
+    transform: none !important;
+    padding: 6px 10px !important;
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 16px;
+    cursor: pointer;
+}
+
+#faqMenu {
+    height: auto !important;
+    max-height: min(70vh, 560px);
+    width: min(400px, calc(100vw - 48px)) !important;
+}
+
+/* ---------- small desktop ---------- */
+@media (max-width: 1100px) {
+    #main {
+        grid-template-columns: 72px 220px minmax(0, 1fr) 200px;
+    }
+}
+
+@media (max-width: 960px) {
+    #main {
+        grid-template-columns: 64px 200px minmax(0, 1fr);
+        grid-template-areas:
+            "guilds server chat"
+            "guilds channels chat"
+            "guilds user chat";
+    }
+    #memberBar {
+        display: none;
+    }
+    body.show-members #memberBar {
+        display: block;
+        position: fixed !important;
+        right: 0;
+        top: 36px;
+        bottom: 0;
+        width: min(260px, 80vw) !important;
+        z-index: 500;
+        box-shadow: -8px 0 24px rgba(0, 0, 0, 0.5);
+    }
+}
+
+/* ---------- mobile ---------- */
+@media (max-width: 860px) {
+    #main {
+        grid-template-columns: 60px minmax(0, 1fr) !important;
+        grid-template-rows: 48px minmax(0, 1fr) auto !important;
+        grid-template-areas:
+            "guilds server"
+            "guilds chat"
+            "guilds chat" !important;
+    }
+    #guild-list {
+        width: 60px !important;
+    }
+    #serverName {
+        margin: 0 !important;
+        width: auto !important;
+    }
+    #serverName .members {
+        display: none !important;
+    }
+    .mobileOnly {
+        display: inline-flex !important;
+    }
+    #channel-list {
+        position: fixed !important;
+        left: 60px !important;
+        top: 84px !important;
+        bottom: 0 !important;
+        width: min(300px, 80vw) !important;
+        z-index: 500;
+        transform: translateX(-110%);
+        transition: transform 0.2s ease;
+        border-right: 1px solid var(--border-subtle);
+    }
+    body.show-channels #channel-list {
+        transform: none !important;
+    }
+    #message-list {
+        margin: 0 !important;
+        width: auto !important;
+        height: auto !important;
+    }
+    #sendmsg {
+        margin: 0 !important;
+        width: auto !important;
+    }
+    #memberBar {
+        top: 84px !important;
+    }
+    #userSettings {
+        margin: 0 !important;
+        width: auto !important;
+        max-width: none !important;
+        display: none;
+    }
+    body.show-channels #userSettings {
+        display: block;
+        position: fixed !important;
+        left: 60px !important;
+        bottom: 0 !important;
+        width: min(300px, 80vw) !important;
+        z-index: 501;
+    }
+}

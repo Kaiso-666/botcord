@@ -1,0 +1,115 @@
+/* Copyright 2017 Sebastian Ouellette
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License. */
+
+.memberMenu {
+    position: absolute;
+    background-color: #2f3136;
+    height: 400px;
+    width: 300px;
+    margin-left: -330px;
+    border-radius: 7px;
+    cursor: default;
+    overflow: hidden;
+    text-align: center;
+    z-index: 1;
+}
+.memberMenuUserDiv {
+    width: 100%;
+    background-color: #202225;
+    padding: 20px 0;
+}
+
+.memberMenuRolesDiv {
+    width: 100%;
+    background-color: #2f3136;
+    padding: 20px 0;
+}
+
+.memberIcon {
+    height: 80px;
+    width: 80px;
+    border-radius: 50%;
+    margin-left: auto;
+    margin-right: auto;
+    display: block;
+    -webkit-mask-image: url("../resources/icons/PFPMask.svg");
+    mask-image: url("../resources/icons/PFPMask.svg");
+    -webkit-mask-size: contain;
+    mask-size: contain;
+}
+
+.memberTopName {
+    color: white;
+    font-size: 16px;
+    font-weight: 600;
+    display: block;
+    margin-top: 10px;
+}
+
+.memberTopDisc {
+    color: #b9bbbe;
+}
+
+.memberBottomName {
+    color: #b9bbbe;
+    font-size: 14px;
+    display: block;
+}
+
+.menuPresenceDiv {
+    margin-top: 15px;
+    width: 80%;
+    margin-left: auto;
+    margin-right: auto;
+    display: block;
+}
+
+.memberCustomPresence {
+    color: #b9bbbe;
+    font-size: 15px;
+    display: inline-block;
+    word-wrap: break-word;
+    white-space: pre-wrap;
+    max-width: 100%;
+}
+
+.menuRolesDiv {
+    width: 80%;
+    margin-left: auto;
+    margin-right: auto;
+    display: block;
+}
+
+.memberRoles {
+    color: #b9bbbe;
+    font-size: 15px;
+    display: inline-block;
+    word-wrap: break-word;
+    white-space: pre-wrap;
+    max-width: 100%;
+}
+
+.memberRoles span {
+    background-color: #202225;
+    margin: 4px;
+    padding: 4px 7px;
+    border-radius: 5px;
+    display: inline-block;
+}
+
+.memberCustomEmoji {
+    display: inline-block;
+    transform: translateY(4px);
+    padding: 5px;
+}

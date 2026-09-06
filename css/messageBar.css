@@ -1,0 +1,172 @@
+/* Copyright 2017 Sebastian Ouellette
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License. */
+
+/* Send message bar */
+#sendmsg {
+    position: absolute;
+    margin-left: 310px;
+    margin-top: -20px;
+    width: calc(100vw - 518px);
+    height: 40px;
+    padding-bottom: 10px;
+    z-index: 2;
+}
+
+#sendmsg::before {
+    content: "";
+    width: 100%;
+    background-color: #36393e;
+    height: 4000px;
+    position: absolute;
+    top: 20px;
+    z-index: -1;
+}
+
+#messageBar {
+    white-space: nowrap;
+    overflow: hidden;
+    width: calc(100% - 40px);
+    background-color: #484b51;
+    height: 100%;
+    margin: 0 0 0 15px;
+    border-radius: 5px;
+    padding: 0 10px 0 0;
+    display: flex;
+
+    /* display: table; */
+}
+
+#msgbox::-webkit-scrollbar {
+    width: 0;
+}
+
+#msgbox {
+    display: block;
+    background-color: transparent;
+    border: none;
+    margin: 0;
+    outline: none;
+    color: white;
+    resize: none;
+    display: inline-block;
+    padding: 10px;
+    width: 100%;
+}
+
+.messageBoxText {
+    font-family: Whitney-light, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    font-weight: 400;
+    padding: 2px 0 1px 0;
+    margin: 0;
+    color: #dcddde;
+    /* width: calc(100% - 40px); */
+    word-spacing: 2px;
+    position: relative;
+    /* display: table-row; */
+}
+
+/* Additional message bar icons */
+#msgMisc {
+    display: block;
+    height: 100%;
+    float: right;
+    margin-top: 4px;
+    display: grid;
+    grid-auto-flow: column;
+    grid-column-gap: 4px;
+}
+
+#msgMisc img {
+    height: 25px;
+    float: left;
+    cursor: pointer;
+    padding: 3px;
+    opacity: 0.6;
+    border-radius: 3px;
+}
+
+#msgMisc img:hover {
+    opacity: 1;
+}
+
+/* Typing Indicator */
+#typingIndicator {
+    font-size: 14px;
+    color: white;
+    position: absolute;
+    z-index: 1;
+    user-select: none;
+    margin: 2px 0 0 0;
+    left: 50px;
+}
+
+#typingDots {
+    position: absolute;
+    display: none;
+    margin-top: 20px;
+}
+
+#typingDots.enabled {
+    display: block;
+}
+
+.bold {
+    font-family: Whitney;
+    font-weight: bold;
+}
+
+.typingDot {
+    height: 8px;
+    width: 8px;
+    background-color: #686a6e;
+    position: absolute;
+    top: -13px;
+    left: 15px;
+    border-radius: 50%;
+    animation: typing 2s infinite;
+}
+
+.dot1 {
+    animation-delay: 0s;
+}
+
+.dot2 {
+    left: 25px;
+    animation-delay: 0.2s;
+}
+
+.dot3 {
+    left: 35px;
+    animation-delay: 0.4s;
+}
+
+@keyframes typing {
+    0%,
+    20% {
+        background-color: #686a6e;
+        transform: scale(0.5);
+    }
+    50% {
+        transform: scale(1);
+        background-color: white;
+    }
+    80%,
+    100% {
+        background-color: #686a6e;
+        transform: scale(0.5);
+    }
+}
+
+/*  */
