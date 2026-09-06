@@ -1,6 +1,6 @@
 # Botcord Web — Python host + browser client
 
-This is the web version of LiveBot/Botcord. Instead of an Electron desktop
+This is the web version of Botcord (Fork of LiveBot). Instead of an Electron desktop
 app with discord.js running inside the UI, the architecture is now:
 
 ```
