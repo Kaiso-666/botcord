@@ -246,6 +246,7 @@
 .messageBlock > .reactions,
 .messageBlock > .v2wrap,
 .messageBlock > .v2poll,
+.messageBlock > .linkPreview,
 .messageBlock > .previewImage,
 .messageBlock > video.previewImage,
 .messageBlock > audio {
@@ -258,6 +259,7 @@
 .messageBlock:not(.firstmsg) > .reactions,
 .messageBlock:not(.firstmsg) > .v2wrap,
 .messageBlock:not(.firstmsg) > .v2poll,
+.messageBlock:not(.firstmsg) > .linkPreview,
 .messageBlock:not(.firstmsg) > .previewImage,
 .messageBlock:not(.firstmsg) > video.previewImage,
 .messageBlock:not(.firstmsg) > audio {
@@ -352,6 +354,58 @@
     to {
         background-position: -200% 0;
     }
+}
+
+/* ==================== link media previews ====================
+ * Bare image / video / GIF links expand inline, like Discord. */
+
+.linkPreview {
+    margin: 4px 0;
+    max-width: 400px;
+    min-width: 0;
+}
+
+.linkPreview a {
+    display: block;
+    max-width: 100%;
+}
+
+.linkWrap {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+}
+
+.linkPreview-img {
+    display: block;
+    max-width: 100%;
+    max-height: 350px;
+    border-radius: 8px;
+    cursor: zoom-in;
+    background: #2f3136;
+}
+
+.linkPreview-vid {
+    display: block;
+    max-width: 100%;
+    max-height: 350px;
+    border-radius: 8px;
+    background: #000;
+    outline: none;
+}
+
+.gifBadge {
+    position: absolute;
+    left: 8px;
+    top: 8px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    pointer-events: none;
+    letter-spacing: 0.5px;
 }
 
 /* ==================== reactions ==================== */

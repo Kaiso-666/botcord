@@ -268,6 +268,140 @@ function showVideoEmbed(embed, msg, element) {
     element.appendChild(vid);
 }
 
+// Link media previews, Discord-style: bare image / video / GIF links in the
+// message text expand inline (images, video players, GIF badges). Links
+// Discord already unfurled into embeds/attachments are skipped so nothing
+// renders twice; links inside code spans are left alone.
+const LINK_IMG_RE = /\.(png|jpe?g|gif|webp|avif|bmp|svg)([?#]|$)/i;
+const LINK_VID_RE = /\.(mp4|webm|mov|m4v)([?#]|$)/i;
+const LINK_FMT_RE = /[?&](?:format|fm)=(png|jpe?g|gif|webp|avif)/i;
+const MAX_LINK_PREVIEWS = 4;
+
+function extractLinkUrls(text) {
+    if (!text) return [];
+    // ignore code blocks / inline code: examples shouldn't expand
+    const scrubbed = String(text)
+        .replace(/```[\s\S]*?```/g, ' ')
+        .replace(/`[^`\n]*`/g, ' ');
+    const out = [];
+    const re = /https?:\/\/[^\s<>()"']+/gi;
+    let m;
+    while ((m = re.exec(scrubbed))) {
+        // trim trailing punctuation that isn't part of the URL
+        const url = m[0].replace(/[.,!?;:)\]}>]+$/, '');
+        if (url && out.indexOf(url) === -1) out.push(url);
+    }
+    return out;
+}
+
+// Giphy share-page URL -> direct GIF (Discord unfurls these the same way).
+// Tenor/imgur-album pages need API resolution, so they're left as links —
+// Discord's own server-side embeds cover them when it generates them.
+function giphyGifUrl(url) {
+    const m = String(url).match(
+        /^https?:\/\/(?:www\.)?giphy\.com\/gifs\/(?:.*-)?([A-Za-z0-9]+)\/?(?:[?#].*)?$/
+    );
+    if (m) return `https://media.giphy.com/media/${m[1]}/giphy.gif`;
+    return null;
+}
+
+function collectCoveredUrls(msg) {
+    const covered = new Set();
+    const add = (u) => {
+        if (typeof u === 'string' && u) covered.add(u);
+    };
+    (msg.embeds || []).forEach((e) => {
+        if (!e || typeof e !== 'object') return;
+        add(e.url);
+        ['image', 'thumbnail', 'video'].forEach((k) => {
+            const o = e[k];
+            if (o && typeof o === 'object') {
+                add(o.proxy_url);
+                add(o.url);
+            }
+        });
+    });
+    (msg.attachments || []).forEach((a) => {
+        if (!a) return;
+        add(a.url);
+        add(a.proxy_url);
+    });
+    return covered;
+}
+
+function linkPreviewKind(url) {
+    const gif = giphyGifUrl(url);
+    if (gif) return { kind: 'image', src: gif };
+    let path = '';
+    try {
+        path = new URL(url).pathname || '';
+    } catch (e) {
+        return null;
+    }
+    if (LINK_VID_RE.test(path)) return { kind: 'video', src: url };
+    if (LINK_IMG_RE.test(path) || LINK_FMT_RE.test(url)) {
+        return { kind: 'image', src: url };
+    }
+    return null;
+}
+
+function showLinkPreviews(msg, element) {
+    const urls = extractLinkUrls(msg.content);
+    if (!urls.length) return;
+    const covered = collectCoveredUrls(msg);
+    const samePage = (u) => {
+        const base = String(u).split('?')[0].split('#')[0];
+        for (const c of covered) {
+            if (String(c).split('?')[0].split('#')[0] === base) return true;
+        }
+        return false;
+    };
+    let shown = 0;
+    for (const url of urls) {
+        if (shown >= MAX_LINK_PREVIEWS) break;
+        const found = linkPreviewKind(url);
+        if (!found) continue;
+        // Discord already unfurled this one (embed/attachment): skip it.
+        if (covered.has(url) || covered.has(found.src) || samePage(url)) continue;
+        const wrap = document.createElement('div');
+        wrap.className = 'linkPreview';
+        if (found.kind === 'video') {
+            const vid = document.createElement('video');
+            vid.className = 'linkPreview-vid';
+            vid.src = found.src;
+            vid.setAttribute('controls', 'true');
+            vid.setAttribute('preload', 'metadata');
+            vid.setAttribute('playsinline', 'true');
+            vid.onerror = () => wrap.remove();
+            wrap.appendChild(vid);
+        } else {
+            const link = document.createElement('a');
+            link.href = url;
+            link.target = '_blank';
+            link.rel = 'noreferrer noopener';
+            const holder = document.createElement('span');
+            holder.className = 'linkWrap';
+            const img = document.createElement('img');
+            img.className = 'linkPreview-img';
+            img.src = found.src;
+            img.alt = url;
+            img.loading = 'lazy';
+            img.onerror = () => wrap.remove();
+            holder.appendChild(img);
+            if (/\.gif([?#]|$)/i.test(found.src)) {
+                const badge = document.createElement('span');
+                badge.className = 'gifBadge';
+                badge.textContent = 'GIF';
+                holder.appendChild(badge);
+            }
+            link.appendChild(holder);
+            wrap.appendChild(link);
+        }
+        element.appendChild(wrap);
+        shown++;
+    }
+}
+
 // Attachments rendered with the same embed styles
 function showAttachment(att, element) {
     if (!att) return;

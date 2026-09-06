@@ -114,6 +114,9 @@ silently. The usual causes:
 * DM home with open-DM list
 * Message history (100), grouped rendering, markdown / spoilers /
   code blocks / unicode + custom emoji, mentions, embeds, attachments
+* Link previews: bare image / video / GIF links (and Giphy share links)
+  expand inline with a player and GIF badges, skipping links Discord
+  already unfurled or that sit inside code spans
 * Sending, inline edit, delete, pin/unpin, purge (`/purge <n>`)
 * Instant sends: your message appears immediately, greyed out, and turns
   normal once the server confirms it (red + click-to-retry on failure)

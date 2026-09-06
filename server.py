@@ -34,7 +34,7 @@ WEB_DIR = BASE_DIR / "web"
 # Bump whenever the REST/WS contract changes. The site checks this on
 # startup and tells the user to restart / hard-refresh on mismatch
 # instead of hanging on the loader forever.
-SERVER_VERSION = 9
+SERVER_VERSION = 10
 
 log = logging.getLogger("botcord")
 

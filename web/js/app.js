@@ -9,7 +9,7 @@
 
 // Must match SERVER_VERSION in server.py. Checked on startup so a stale
 // server or cached site fails with a clear message instead of hanging.
-const CLIENT_VERSION = 9;
+const CLIENT_VERSION = 10;
 
 const S = {
     me: null,
@@ -995,6 +995,11 @@ function messageBlock(m) {
             console.error('embed render failed', err);
         }
     });
+    try {
+        showLinkPreviews(m, darkBG);
+    } catch (err) {
+        console.error('link preview failed', err);
+    }
     try {
         renderComponentsV2(m, darkBG, isDM);
     } catch (err) {
