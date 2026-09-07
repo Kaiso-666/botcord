@@ -9,7 +9,7 @@
 
 // Must match SERVER_VERSION in server.py. Checked on startup so a stale
 // server or cached site fails with a clear message instead of hanging.
-const CLIENT_VERSION = 15;
+const CLIENT_VERSION = 16;
 
 const S = {
     me: null,
@@ -620,6 +620,112 @@ function updateUserCard() {
     $('userCardIcon').src = (me && me.avatar) || DEFAULT_AVATAR;
 }
 
+/* ==================== settings + themes ================================
+ * Cog button in the user footer opens a modern settings modal. The only
+ * option for now is the theme: light / dark (current) / night (onyx).
+ * The choice persists in localStorage (botcord.ui.theme) and applies via
+ * `data-theme` on <html> (see the theme variants at the end of modern.css).
+ */
+
+const THEME_VALUES = ['light', 'dark', 'night'];
+
+function currentTheme() {
+    try {
+        const t = store.ui && store.ui.theme;
+        if (THEME_VALUES.includes(t)) return t;
+    } catch (e) {
+        /* ignore */
+    }
+    return 'dark';
+}
+
+function paintThemeChoices() {
+    try {
+        const cur = currentTheme();
+        document.querySelectorAll('.themeChoice').forEach((b) => {
+            b.classList.toggle('selected', b.dataset.themeValue === cur);
+        });
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+function applyTheme(t) {
+    if (!THEME_VALUES.includes(t)) t = 'dark';
+    try {
+        document.documentElement.dataset.theme = t;
+    } catch (e) {
+        /* ignore */
+    }
+    try {
+        saveUI({ theme: t });
+    } catch (e) {
+        /* ignore */
+    }
+    paintThemeChoices();
+}
+
+function openSettings() {
+    paintThemeChoices();
+    const m = $('settingsModal');
+    if (m) m.classList.remove('hidden');
+}
+
+function closeSettings() {
+    const m = $('settingsModal');
+    if (m) m.classList.add('hidden');
+}
+
+// The cog art lives in resources as settings.svg (preferred) or
+// settings.png — probe in that order so a dropped-in file just works.
+// Fixed-size box + object-fit in CSS keeps it from ever stretching;
+// when neither file exists a gear glyph is used instead.
+function loadSettingsIcon() {
+    try {
+        const img = $('settingsBtnIcon');
+        const btn = $('settingsBtn');
+        if (!img || !btn) return;
+        const fallback = () => {
+            try {
+                if (!$('settingsBtnIcon')) return; // already replaced
+                const s = document.createElement('span');
+                s.className = 'settingsGearFallback';
+                s.innerText = '⚙';
+                img.replaceWith(s);
+            } catch (e) {
+                /* ignore */
+            }
+        };
+        img.addEventListener('error', function h() {
+            try {
+                const cur = img.getAttribute('src') || '';
+                if (cur.endsWith('settings.svg')) {
+                    img.src = '/resources/icons/settings.png';
+                } else {
+                    img.removeEventListener('error', h);
+                    fallback();
+                }
+            } catch (e) {
+                fallback();
+            }
+        });
+        // cached 404s may not refire `error`: probe explicitly
+        try {
+            const probe = new Image();
+            probe.onerror = () => {
+                // svg missing and the <img> already failed silently
+                if (!img.isConnected || img.naturalWidth) return;
+                img.src = '/resources/icons/settings.png';
+            };
+            probe.src = '/resources/icons/settings.svg';
+        } catch (e) {
+            /* the <img> onerror chain covers it */
+        }
+    } catch (e) {
+        /* keep whatever the static HTML rendered */
+    }
+}
+
 /* ============================== guild list =============================== */
 
 function ensureGuildContainer() {
@@ -1077,12 +1183,144 @@ function daySeparator(iso) {
     return sep;
 }
 
+/* Discord-style reply/mention highlight: a message that pings you (@you,
+ * @everyone/@here, a role you have, or a reply to one of your messages)
+ * gets a yellow wash + a thin bar on the left edge of the message block.
+ * Own messages never highlight. */
+
+function myRoleIds() {
+    const out = new Set();
+    try {
+        if (!S.me) return out;
+        const me = String(S.me.id);
+        const pools = [];
+        if (S.channel && S.channel.guild_id && S.members[S.channel.guild_id]) {
+            pools.push(S.members[S.channel.guild_id]);
+        } else {
+            Object.values(S.members || {}).forEach((arr) => pools.push(arr));
+        }
+        pools.forEach((arr) => {
+            (arr || []).forEach((m) => {
+                if (String(m.id) === me) {
+                    (m.roles || []).forEach((r) => out.add(String(r)));
+                }
+            });
+        });
+    } catch (e) {
+        /* ignore */
+    }
+    return out;
+}
+
+function isEveryoneMention(m) {
+    try {
+        if (m && typeof m.mention_everyone === 'boolean') return m.mention_everyone;
+    } catch (e) {
+        /* fall through to text check */
+    }
+    try {
+        const text = m.clean_content || m.content || '';
+        return /(^|\s)@(everyone|here)(?=[\s<.,!?;:]|$)/m.test(text);
+    } catch (e) {
+        return false;
+    }
+}
+
+function messageMentionsMe(m) {
+    try {
+        if (!m || !S.me) return false;
+        const me = String(S.me.id);
+        if (m.author && String(m.author.id) === me) return false; // own messages never highlight
+        const users = (m.mentions && m.mentions.users) || [];
+        for (const u of users) {
+            if (String((u && u.id) || '') === me) return true;
+        }
+        // mentions list can lag behind the raw text (history edge cases)
+        try {
+            const raw = m.content || '';
+            if (raw.includes(`<@${me}>`) || raw.includes(`<@!${me}>`)) return true;
+        } catch (e) {
+            /* ignore */
+        }
+        if (isEveryoneMention(m)) return true;
+        const roles = (m.mentions && m.mentions.roles) || [];
+        if (roles.length) {
+            const mine = myRoleIds();
+            const gid = (S.channel && S.channel.guild_id) || m.guild_id || S.guildId;
+            for (const r of roles) {
+                const rid = String(r);
+                if (mine.has(rid)) return true;
+                // @everyone's role id equals the guild id: pings the whole server
+                if (gid && rid === String(gid)) return true;
+            }
+        }
+    } catch (e) {
+        /* never break rendering */
+    }
+    return false;
+}
+
+function isReplyToMeSync(m) {
+    try {
+        if (!m || !m.reference || !m.reference.message_id || !S.me) return false;
+        const me = String(S.me.id);
+        const refId = String(m.reference.message_id);
+        const target = document.getElementById(refId);
+        if (target && target.dataset && target.dataset.authorId) {
+            return String(target.dataset.authorId) === me;
+        }
+        const cached = ReplyCache.get(refId);
+        if (cached && cached.authorId) {
+            return String(cached.authorId) === me;
+        }
+    } catch (e) {
+        /* ignore */
+    }
+    return false;
+}
+
+function applyMentionHighlight(m, node) {
+    try {
+        if (!m || !node) return;
+        if (messageMentionsMe(m) || isReplyToMeSync(m)) {
+            node.classList.add('mention-highlight');
+            return;
+        }
+        // The original isn't loaded yet: fetch it once and highlight late
+        // when it turns out to be a reply to one of my messages.
+        const ref = m.reference;
+        if (!ref || !ref.message_id || !S.me) return;
+        if (m.author && S.me && String(m.author.id) === String(S.me.id)) return;
+        const refId = String(ref.message_id);
+        if (ReplyCache.get(refId)) return; // sync check already failed
+        Api.message(ref.channel_id || m.channel_id, ref.message_id)
+            .then((res) => {
+                try {
+                    const om = res && res.message;
+                    if (!om) return;
+                    const entry = quotePreviewFor(om);
+                    if (ReplyCache.size > 200) ReplyCache.clear();
+                    ReplyCache.set(refId, entry);
+                    if (entry.authorId && S.me && String(entry.authorId) === String(S.me.id)) {
+                        if (node.isConnected) node.classList.add('mention-highlight');
+                    }
+                } catch (e) {
+                    /* ignore */
+                }
+            })
+            .catch(() => {});
+    } catch (e) {
+        /* never break rendering */
+    }
+}
+
 function messageBlock(m) {
     const darkBG = el('div', 'messageBlock');
     darkBG.id = m.id;
     darkBG.dataset.content = m.content || '';
     darkBG.dataset.authorId = m.author.id;
     darkBG.dataset.timestamp = m.timestamp || '';
+    applyMentionHighlight(m, darkBG);
 
     const isDM = !m.guild_id;
     renderReplyBar(m, darkBG);
@@ -1200,11 +1438,18 @@ function quotePreviewFor(om) {
     } catch (e) {
         avatar = null;
     }
+    let authorId = null;
+    try {
+        authorId = (om.author && om.author.id != null && String(om.author.id)) || null;
+    } catch (e) {
+        authorId = null;
+    }
     return {
         name: replyNameFor(om),
         snippet: text,
         avatar,
         color,
+        authorId,
         hasMedia,
         mediaOnly: !text && hasMedia,
     };
@@ -1305,6 +1550,8 @@ function renderReplyBar(m, parent) {
                 avatar: (imgNode && imgNode.src) || null,
                 color:
                     (nameNode && nameNode.style && nameNode.style.color) || null,
+                authorId:
+                    (target.dataset && target.dataset.authorId) || null,
                 hasMedia: !!target.querySelector(
                     'img.linkPreview-img, img.embedImage, img.previewImage, video, audio'
                 ),
@@ -2300,7 +2547,9 @@ function paintResolvedSpan(s) {
                 s.innerText = '@' + hit.name;
                 if (hit.color) {
                     try {
-                        s.style.color = hit.color;
+                        // role pills wear the role color, not blurple
+                        s.style.setProperty('color', hit.color, 'important');
+                        s.style.setProperty('background-color', `${hit.color}26`, 'important');
                     } catch (e) {
                         /* ignore */
                     }
@@ -3978,6 +4227,7 @@ function makePendingMessage(tempId, channel, content, embed, reply) {
         content: content || '',
         clean_content: content || '',
         mentions: { users: [], roles: [], channels: [] },
+        mention_everyone: false,
         embeds: embed ? [embed] : [],
         attachments: [],
         reactions: [],
@@ -4362,7 +4612,33 @@ function wireStaticUI() {
     ensureMsgWrap();
     ensureReplyComposer();
     ensureComposerButtons();
+    applyTheme(currentTheme());
+    loadSettingsIcon();
     $('homeBtn').addEventListener('click', showDMHome);
+
+    const settingsBtn = $('settingsBtn');
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openSettings();
+        });
+    }
+    const settingsClose = $('settingsClose');
+    if (settingsClose) {
+        settingsClose.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeSettings();
+        });
+    }
+    const settingsModal = $('settingsModal');
+    if (settingsModal) {
+        settingsModal.addEventListener('click', (e) => {
+            if (e.target === settingsModal) closeSettings();
+        });
+    }
+    document.querySelectorAll('.themeChoice').forEach((b) => {
+        b.addEventListener('click', () => applyTheme(b.dataset.themeValue));
+    });
 
     // mobile drawers
     $('chanToggle').addEventListener('click', (e) => {
@@ -4429,6 +4705,7 @@ function wireStaticUI() {
         if (e.key === 'Escape') {
             closeRcMenu();
             closeEmbedModal();
+            closeSettings();
             hideMentionSuggest();
             closeEmojiPicker();
             closeMediaPanel();

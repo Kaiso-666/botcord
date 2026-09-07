@@ -214,6 +214,7 @@
     height: 28px;
     border-radius: 50%;
     flex-shrink: 0;
+    object-fit: cover;
 }
 
 .mentionGlyph {
@@ -558,15 +559,18 @@
 }
 
 .compIconImg {
-    width: 22px;
-    height: 22px;
+    width: auto;
+    height: auto;
+    max-width: 22px;
+    max-height: 22px;
+    object-fit: contain;
     display: block;
     pointer-events: none;
 }
 
 #attachBtn .compIconImg {
-    width: 18px;
-    height: 18px;
+    max-width: 18px;
+    max-height: 18px;
 }
 
 #attachBtn {
@@ -721,6 +725,7 @@
 .reactionEmoji {
     width: 18px;
     height: 18px;
+    object-fit: contain;
 }
 
 .reactionEmojiTxt {
@@ -848,6 +853,7 @@
 .mediaGrid .emojiPickImg {
     width: 30px;
     height: 30px;
+    object-fit: contain;
 }
 
 .mediaEmpty,
@@ -982,6 +988,7 @@
 .emojiPickImg {
     width: 24px;
     height: 24px;
+    object-fit: contain;
 }
 
 .emojiSep {
@@ -1102,6 +1109,7 @@
     width: 16px;
     height: 16px;
     border-radius: 50%;
+    object-fit: cover;
 }
 
 .replyAuthor {
@@ -1284,6 +1292,7 @@ button.v2btn:disabled,
 .v2emoji {
     width: 18px;
     height: 18px;
+    object-fit: contain;
 }
 
 .v2select {

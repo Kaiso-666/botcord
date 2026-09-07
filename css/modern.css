@@ -1063,3 +1063,773 @@ p {
         z-index: 501;
     }
 }
+
+/* ==================== settings button (user footer cog) ====================
+ * Icon is loaded from /resources/icons/settings.svg with a .png fallback
+ * (see loadSettingsIcon in app.js). Fixed box + object-fit so art never
+ * stretches, whatever the source file's aspect ratio is. */
+
+#settingsBtn {
+    margin-left: auto !important;
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    opacity: 0.7;
+    padding: 0;
+}
+
+#settingsBtn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    opacity: 1;
+}
+
+#settingsBtnIcon {
+    width: 20px !important;
+    height: 20px !important;
+    min-width: 20px;
+    min-height: 20px;
+    max-width: 20px;
+    max-height: 20px;
+    object-fit: contain;
+    display: block;
+    pointer-events: none;
+}
+
+.settingsGearFallback {
+    font-size: 18px;
+    line-height: 1;
+    color: #b5bac1;
+    pointer-events: none;
+}
+
+/* ==================== settings modal ==================== */
+
+#settingsModal {
+    position: fixed;
+    inset: 0;
+    z-index: 9600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 16px;
+    box-sizing: border-box;
+}
+
+#settingsModal.hidden {
+    display: none !important;
+}
+
+#settingsBox {
+    width: min(520px, calc(100vw - 32px));
+    max-height: min(80vh, 640px);
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-sidebar);
+    border: 1px solid var(--border-subtle);
+    border-radius: 16px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+    overflow: hidden;
+    animation: settingsPop 0.18s ease;
+}
+
+@keyframes settingsPop {
+    from {
+        transform: scale(0.96) translateY(6px);
+        opacity: 0;
+    }
+    to {
+        transform: none;
+        opacity: 1;
+    }
+}
+
+#settingsHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 16px 12px 20px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+#settingsHeader h3 {
+    margin: 0;
+    color: #fff;
+    font-size: 17px;
+    font-weight: 700;
+}
+
+#settingsClose {
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: var(--text-muted);
+    font-size: 14px;
+    cursor: pointer;
+}
+
+#settingsClose:hover {
+    background: var(--bg-hover);
+    color: #fff;
+}
+
+#settingsBody {
+    padding: 16px 20px 20px;
+    overflow-y: auto;
+}
+
+.settingsSectionLabel {
+    margin: 0 0 10px !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--text-muted) !important;
+}
+
+.settingsOption {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.settingsOptionTexts {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.settingsOptionTitle {
+    color: var(--text-normal);
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.settingsOptionDesc {
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+#themeChoices {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.themeChoice {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    background: var(--bg-chat);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    cursor: pointer;
+    text-align: left;
+    color: var(--text-normal);
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.themeChoice:hover {
+    background: var(--bg-hover);
+}
+
+.themeChoice.selected {
+    border-color: var(--brand);
+    background: rgba(88, 101, 242, 0.12);
+}
+
+.themeSwatch {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: 1px solid rgba(0, 0, 0, 0.4);
+}
+
+.themeSwatchLight {
+    background: linear-gradient(135deg, #ffffff 55%, #e3e5e8 55%);
+}
+
+.themeSwatchDark {
+    background: linear-gradient(135deg, #313338 55%, #1e1f22 55%);
+}
+
+.themeSwatchNight {
+    background: linear-gradient(135deg, #101013 55%, #000000 55%);
+}
+
+.themeTexts {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.themeName {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-normal);
+}
+
+.themeSub {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.themeRadio {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid var(--text-faint);
+    box-sizing: border-box;
+    position: relative;
+}
+
+.themeChoice.selected .themeRadio {
+    border-color: var(--brand);
+}
+
+.themeChoice.selected .themeRadio::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    border-radius: 50%;
+    background: var(--brand);
+}
+
+/* ==================== mention / reply highlight (Discord-style) ==========
+ * A message that pings you (@you, @everyone/@here, a role you have, or a
+ * reply to one of your messages) gets a warm yellow wash plus a thin bar
+ * on the left edge of the message block. */
+
+.messageBlock {
+    position: relative;
+}
+
+.messageBlock.mention-highlight {
+    background-color: rgba(240, 178, 50, 0.1) !important;
+    border-radius: 0 6px 6px 0;
+}
+
+.messageBlock.mention-highlight:hover {
+    background-color: rgba(240, 178, 50, 0.16) !important;
+}
+
+.messageBlock.mention-highlight::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    border-radius: 2px;
+    background: #f0b232;
+    pointer-events: none;
+}
+
+/* Mention pills: bluish tag look for users/channels/@everyone/@here.
+ * Role pills are tinted with the role's own color inline (see format.js),
+ * so they keep the tag shape but wear the role color. */
+
+.ping {
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.ping[data-rid] {
+    font-weight: 600;
+}
+
+/* ==================== theme variants ==================== */
+
+html[data-theme='light'] {
+    --bg-base: #e3e5e8;
+    --bg-rail: #e3e5e8;
+    --bg-sidebar: #f2f3f5;
+    --bg-chat: #ffffff;
+    --bg-input: #ebedef;
+    --bg-hover: #e0e2e5;
+    --bg-active: #d7d9dc;
+    --bg-user: #ebedef;
+    --border-subtle: #d1d3d6;
+    --text-normal: #060607;
+    --text-muted: #5f6368;
+    --text-faint: #87898c;
+}
+
+html[data-theme='light'] body,
+html[data-theme='light'] p {
+    color: var(--text-normal);
+}
+
+html[data-theme='light'] #titlebar {
+    background: var(--bg-rail) !important;
+    border-bottom-color: #c7c9cd;
+}
+
+html[data-theme='light'] #titlebar span {
+    color: var(--text-normal) !important;
+}
+
+html[data-theme='light'] #guild-list {
+    background: var(--bg-rail) !important;
+}
+
+html[data-theme='light'] .homeBreak {
+    background: #c7c9cd !important;
+}
+
+html[data-theme='light'] .guild-icon,
+html[data-theme='light'] #guild-list .guild-icon,
+html[data-theme='light'] #homeBtn .guild-icon {
+    background: var(--bg-sidebar);
+}
+
+html[data-theme='light'] .guildNameContainer {
+    background: #111214 !important;
+}
+
+html[data-theme='light'] #serverName {
+    background: var(--bg-sidebar) !important;
+    border-bottom-color: var(--border-subtle);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+html[data-theme='light'] #guildName {
+    color: #060607 !important;
+}
+
+html[data-theme='light'] #channel-list,
+html[data-theme='light'] #memberBar {
+    background: var(--bg-sidebar) !important;
+    color: var(--text-muted) !important;
+}
+
+html[data-theme='light'] .channel:hover,
+html[data-theme='light'] .dmChannel:hover,
+html[data-theme='light'] .mLUserDiv:hover {
+    background: var(--bg-hover) !important;
+    color: var(--text-normal) !important;
+}
+
+html[data-theme='light'] .selectedChan {
+    background: var(--bg-active) !important;
+    color: #060607 !important;
+}
+
+html[data-theme='light'] .categoryText {
+    color: var(--text-muted) !important;
+}
+
+html[data-theme='light'] #userSettings {
+    background: var(--bg-user) !important;
+}
+
+html[data-theme='light'] #userCardName {
+    color: #060607 !important;
+}
+
+html[data-theme='light'] #settingsBtn:hover {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+html[data-theme='light'] #msgSpace,
+html[data-theme='light'] #message-list {
+    background: var(--bg-chat) !important;
+}
+
+html[data-theme='light'] .messageBlock:hover {
+    background: #f2f3f5 !important;
+}
+
+html[data-theme='light'] .messageText,
+html[data-theme='light'] .v2text {
+    color: var(--text-normal) !important;
+}
+
+html[data-theme='light'] .messageTimestamp {
+    color: var(--text-faint) !important;
+}
+
+html[data-theme='light'] .sorryNoLoad {
+    color: var(--text-faint) !important;
+}
+
+html[data-theme='light'] .messageCont.timeSeparated {
+    border-top-color: #e0e2e5;
+}
+
+html[data-theme='light'] .daySeparator {
+    color: var(--text-muted);
+}
+
+html[data-theme='light'] .daySeparator::before,
+html[data-theme='light'] .daySeparator::after {
+    background: #e0e2e5;
+}
+
+html[data-theme='light'] #messageBar {
+    background: var(--bg-input) !important;
+}
+
+html[data-theme='light'] #msgbox {
+    color: var(--text-normal) !important;
+}
+
+html[data-theme='light'] #msgBackdrop {
+    color: var(--text-normal);
+}
+
+html[data-theme='light'] #typingIndicator {
+    color: var(--text-muted) !important;
+}
+
+html[data-theme='light'] .embed,
+html[data-theme='light'] .v2container {
+    background: #f2f3f5 !important;
+}
+
+html[data-theme='light'] .codeBlock {
+    background: #f2f3f5 !important;
+    border-color: #e0e2e5 !important;
+    color: #2e3338;
+}
+
+html[data-theme='light'] .inlineCodeBlock {
+    background: #f2f3f5 !important;
+}
+
+html[data-theme='light'] .ping {
+    background: rgba(88, 101, 242, 0.15) !important;
+    color: #4752c4 !important;
+}
+
+html[data-theme='light'] .ping:hover {
+    background: var(--brand) !important;
+    color: #fff !important;
+}
+
+html[data-theme='light'] .msgMentionPill {
+    background: rgba(88, 101, 242, 0.2);
+    color: #4752c4;
+}
+
+html[data-theme='light'] #replyComposer {
+    background: #f2f3f5;
+    color: var(--text-muted);
+}
+
+html[data-theme='light'] #replyComposerName {
+    color: #060607;
+}
+
+html[data-theme='light'] #replyComposerSnippet {
+    color: var(--text-faint);
+}
+
+html[data-theme='light'] .replyBar {
+    color: var(--text-muted);
+}
+
+html[data-theme='light'] .replySnippet {
+    color: var(--text-muted);
+}
+
+html[data-theme='light'] .replySpine {
+    border-color: #c7c9cd;
+}
+
+html[data-theme='light'] #mentionSuggest {
+    background: #ffffff;
+    border-color: #e0e2e5;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+html[data-theme='light'] .mentionRow:hover,
+html[data-theme='light'] .mentionRow.active {
+    background: #f2f3f5;
+}
+
+html[data-theme='light'] .mentionName {
+    color: #060607;
+}
+
+html[data-theme='light'] .mentionSub {
+    color: var(--text-muted);
+}
+
+html[data-theme='light'] #rcMenu {
+    background: #ffffff !important;
+    border-color: #e0e2e5;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+html[data-theme='light'] .rcOption {
+    color: #060607;
+}
+
+html[data-theme='light'] .rcOption:hover {
+    background: var(--bg-hover) !important;
+}
+
+html[data-theme='light'] #toast {
+    background: #111214 !important;
+}
+
+html[data-theme='light'] #embedModalBox {
+    background: #ffffff !important;
+    border-color: #e0e2e5;
+}
+
+html[data-theme='light'] #embedModalBox h3 {
+    color: #060607;
+}
+
+html[data-theme='light'] #embedModalBox input,
+html[data-theme='light'] #embedModalBox textarea {
+    background: #f2f3f5;
+    border-color: #e0e2e5;
+    color: #060607;
+}
+
+html[data-theme='light'] #mediaPanel {
+    background: #ffffff;
+    border-color: #e0e2e5;
+}
+
+html[data-theme='light'] #mediaSearch {
+    background: #ebedef;
+    color: #060607;
+}
+
+html[data-theme='light'] .mediaTab {
+    color: var(--text-muted);
+}
+
+html[data-theme='light'] .mediaTab.active {
+    background: #e0e2e5;
+    color: #060607;
+}
+
+html[data-theme='light'] .reaction {
+    background: #f2f3f5;
+    border-color: #e0e2e5;
+}
+
+html[data-theme='light'] .reactionCount {
+    color: var(--text-muted);
+}
+
+html[data-theme='light'] .v2poll,
+html[data-theme='light'] .v2select,
+html[data-theme='light'] .v2file,
+html[data-theme='light'] .stickerLottie {
+    background: #f2f3f5;
+    border-color: #e0e2e5;
+    color: var(--text-normal);
+}
+
+html[data-theme='light'] .v2poll-a {
+    background: #e0e2e5;
+    color: var(--text-normal);
+}
+
+html[data-theme='light'] .messageBlock.mention-highlight {
+    background-color: rgba(240, 178, 50, 0.18) !important;
+}
+
+html[data-theme='light'] .messageBlock.mention-highlight:hover {
+    background-color: rgba(240, 178, 50, 0.24) !important;
+}
+
+html[data-theme='light'] #settingsBox {
+    background: #ffffff;
+    border-color: #e0e2e5;
+}
+
+html[data-theme='light'] #settingsHeader {
+    border-bottom-color: #e0e2e5;
+}
+
+html[data-theme='light'] #settingsHeader h3 {
+    color: #060607;
+}
+
+html[data-theme='light'] #settingsClose:hover {
+    background: #f2f3f5;
+    color: #060607;
+}
+
+html[data-theme='light'] .themeChoice {
+    background: #f2f3f5;
+    border-color: #e0e2e5;
+}
+
+html[data-theme='light'] .themeChoice:hover {
+    background: #e9eaed;
+}
+
+/* ---- night: pure onyx black ---- */
+
+html[data-theme='night'] {
+    --bg-base: #000000;
+    --bg-rail: #000000;
+    --bg-sidebar: #0a0a0c;
+    --bg-chat: #000000;
+    --bg-input: #101013;
+    --bg-hover: #151518;
+    --bg-active: #1e1f23;
+    --bg-user: #060607;
+    --border-subtle: #000000;
+    --text-normal: #dbdee1;
+    --text-muted: #949ba4;
+    --text-faint: #6d6f78;
+}
+
+html[data-theme='night'] #titlebar {
+    background: #000000 !important;
+    border-bottom-color: #000000;
+}
+
+html[data-theme='night'] #guild-list {
+    background: #000000 !important;
+}
+
+html[data-theme='night'] #serverName {
+    background: #0a0a0c !important;
+    border-bottom-color: #000000;
+}
+
+html[data-theme='night'] #channel-list,
+html[data-theme='night'] #memberBar {
+    background: #0a0a0c !important;
+}
+
+html[data-theme='night'] #userSettings {
+    background: #060607 !important;
+}
+
+html[data-theme='night'] #msgSpace,
+html[data-theme='night'] #message-list {
+    background: #000000 !important;
+}
+
+html[data-theme='night'] .messageBlock:hover {
+    background: #0e0e11 !important;
+}
+
+html[data-theme='night'] #messageBar {
+    background: #101013 !important;
+}
+
+html[data-theme='night'] .embed,
+html[data-theme='night'] .v2container {
+    background: #0e0e11 !important;
+}
+
+html[data-theme='night'] .codeBlock {
+    background: #060607 !important;
+    border-color: #000000 !important;
+}
+
+html[data-theme='night'] .inlineCodeBlock {
+    background: #060607 !important;
+}
+
+html[data-theme='night'] #replyComposer {
+    background: #0e0e11;
+}
+
+html[data-theme='night'] .replySpine {
+    border-color: #2b2d31;
+}
+
+html[data-theme='night'] #mentionSuggest {
+    background: #0e0e11;
+    border-color: #000000;
+}
+
+html[data-theme='night'] .mentionRow:hover,
+html[data-theme='night'] .mentionRow.active {
+    background: #1a1b1e;
+}
+
+html[data-theme='night'] #rcMenu {
+    background: #060607 !important;
+    border-color: #1a1b1e;
+}
+
+html[data-theme='night'] #mediaPanel {
+    background: #0a0a0c;
+    border-color: #000000;
+}
+
+html[data-theme='night'] #mediaSearch {
+    background: #000000;
+}
+
+html[data-theme='night'] .reaction {
+    background: #101013;
+    border-color: #2b2d31;
+}
+
+html[data-theme='night'] .v2poll,
+html[data-theme='night'] .v2select,
+html[data-theme='night'] .v2file {
+    background: #0e0e11;
+    border-color: #000000;
+}
+
+html[data-theme='night'] .v2poll-a {
+    background: #151518;
+}
+
+html[data-theme='night'] .messageCont.timeSeparated {
+    border-top-color: #1a1b1e;
+}
+
+html[data-theme='night'] .daySeparator::before,
+html[data-theme='night'] .daySeparator::after {
+    background: #1a1b1e;
+}
+
+html[data-theme='night'] #settingsBox {
+    background: #0a0a0c;
+    border-color: #1a1b1e;
+}
+
+html[data-theme='night'] #settingsHeader {
+    border-bottom-color: #1a1b1e;
+}
+
+html[data-theme='night'] .themeChoice {
+    background: #000000;
+    border-color: #1a1b1e;
+}
+
+html[data-theme='night'] .themeChoice:hover {
+    background: #101013;
+}
+
+html[data-theme='night'] .themeChoice.selected {
+    background: rgba(88, 101, 242, 0.16);
+}

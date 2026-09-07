@@ -35,7 +35,7 @@ WEB_DIR = BASE_DIR / "web"
 # Bump whenever the REST/WS contract changes. The site checks this on
 # startup and tells the user to restart / hard-refresh on mismatch
 # instead of hanging on the loader forever.
-SERVER_VERSION = 15
+SERVER_VERSION = 16
 
 log = logging.getLogger("botcord")
 
@@ -384,6 +384,10 @@ def message_json(m) -> dict:
         for u in getattr(m, "mentions", []) or []
         if hasattr(u, "id")
     ]
+    try:
+        mention_everyone = bool(getattr(m, "mention_everyone", False))
+    except Exception:
+        mention_everyone = False
     # discord.py exposes user/role/channel mentions as raw id lists.
     try:
         mention_roles = [str(i) for i in getattr(m, "raw_role_mentions", [])]
@@ -446,6 +450,7 @@ def message_json(m) -> dict:
             "roles": mention_roles,
             "channels": mention_channels,
         },
+        "mention_everyone": mention_everyone,
         "embeds": embeds,
         "attachments": attachments,
         "reactions": reactions,

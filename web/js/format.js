@@ -147,6 +147,15 @@ const Fmt = (() => {
         return r ? r.name : null;
     }
 
+    // Role pills wear the role's own color (Discord-style): tinted background
+    // + colored text. Channels and users keep the default blurple tag look.
+    // `!important` beats the `.ping` stylesheet rule so the tint always wins.
+    function rolePillStyle(id) {
+        const r = lookup.roles[String(id)];
+        if (r && r.color) return ` style="color: ${r.color} !important;background-color: ${r.color}26 !important"`;
+        return '';
+    }
+
     // clean_content style: "@Name" / "#channel" plain text matched against
     // the message's mention lists + cached guild data.
     function formatPings(msg, text, isDM) {
@@ -182,8 +191,7 @@ const Fmt = (() => {
             const name = escReg(String(rawName));
             let color = '';
             if (kind === 'role') {
-                const r = lookup.roles[id];
-                if (r && r.color) color = ` style="color: ${r.color}"`;
+                color = rolePillStyle(id);
             }
             if (kind === 'channel') {
                 const channelRegex = new RegExp(`(?:(<|>)?#(${name}))`, 'g');
@@ -218,8 +226,7 @@ const Fmt = (() => {
         }
         if (!isDM && lookup.roles[id]) {
             const r = lookup.roles[id];
-            const color = r.color ? ` style="color: ${r.color}"` : '';
-            return `<span class="ping"${color} data-rid="${id}">@${pillName(r.name)}</span>`;
+            return `<span class="ping"${rolePillStyle(id)} data-rid="${id}">@${pillName(r.name)}</span>`;
         }
         // unknown for now: tagged so resolveMentions() can fill in the real
         // name async instead of leaving @12345… forever
@@ -234,9 +241,8 @@ const Fmt = (() => {
         // legacy "&amp" spelling that parseHTML emits for "&"
         textContent = textContent.replace(/&lt;@&amp;?(\d+)&gt;/gm, (a, id) => {
             const r = lookup.roles[String(id)];
-            const color = r && r.color ? ` style="color: ${r.color}"` : '';
             const label = r ? `@${pillName(r.name)}` : '@deleted-role';
-            return `<span class="ping"${color} data-rid="${id}">${label}</span>`;
+            return `<span class="ping"${rolePillStyle(id)} data-rid="${id}">${label}</span>`;
         });
         // users
         textContent = textContent.replace(/&lt;@!?(\d+)&gt;/gm, (a, id) =>

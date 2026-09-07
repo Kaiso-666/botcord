@@ -5,31 +5,31 @@
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Botcord Web</title>
         <!-- JS: order matters -->
-        <script src="/js/api.js?v=17" charset="utf-8"></script>
-        <script src="/js/vendor-converter.js?v=17" charset="utf-8"></script>
-        <script src="/js/format.js?v=17" charset="utf-8"></script>
-        <script src="/js/embeds.js?v=17" charset="utf-8"></script>
+        <script src="/js/api.js?v=19" charset="utf-8"></script>
+        <script src="/js/vendor-converter.js?v=19" charset="utf-8"></script>
+        <script src="/js/format.js?v=19" charset="utf-8"></script>
+        <script src="/js/embeds.js?v=19" charset="utf-8"></script>
         <script src="https://cdn.jsdelivr.net/npm/@twemoji/api/dist/twemoji.js"></script>
-        <script src="/js/app.js?v=17" charset="utf-8" defer></script>
+        <script src="/js/app.js?v=19" charset="utf-8" defer></script>
 
         <!-- CSS (reused from the desktop client) -->
-        <link rel="stylesheet" href="/css/fonts.css?v=17" />
-        <link rel="stylesheet" href="/css/master.css?v=17" />
-        <link rel="stylesheet" href="/css/titlebar.css?v=17" />
-        <link rel="stylesheet" href="/css/embeds.css?v=17" />
-        <link rel="stylesheet" href="/css/memberList.css?v=17" />
-        <link rel="stylesheet" href="/css/userSettings.css?v=17" />
-        <link rel="stylesheet" href="/css/textFormat.css?v=17" />
-        <link rel="stylesheet" href="/css/channelList.css?v=17" />
-        <link rel="stylesheet" href="/css/dmList.css?v=17" />
-        <link rel="stylesheet" href="/css/guildList.css?v=17" />
-        <link rel="stylesheet" href="/css/miscs.css?v=17" />
-        <link rel="stylesheet" href="/css/rcMenu.css?v=17" />
-        <link rel="stylesheet" href="/css/memberMenu.css?v=17" />
-        <link rel="stylesheet" href="/css/splashScreen.css?v=17" />
-        <link rel="stylesheet" href="/css/messageBar.css?v=17" />
-        <link rel="stylesheet" href="/css/web.css?v=17" />
-        <link rel="stylesheet" href="/css/modern.css?v=17" />
+        <link rel="stylesheet" href="/css/fonts.css?v=19" />
+        <link rel="stylesheet" href="/css/master.css?v=19" />
+        <link rel="stylesheet" href="/css/titlebar.css?v=19" />
+        <link rel="stylesheet" href="/css/embeds.css?v=19" />
+        <link rel="stylesheet" href="/css/memberList.css?v=19" />
+        <link rel="stylesheet" href="/css/userSettings.css?v=19" />
+        <link rel="stylesheet" href="/css/textFormat.css?v=19" />
+        <link rel="stylesheet" href="/css/channelList.css?v=19" />
+        <link rel="stylesheet" href="/css/dmList.css?v=19" />
+        <link rel="stylesheet" href="/css/guildList.css?v=19" />
+        <link rel="stylesheet" href="/css/miscs.css?v=19" />
+        <link rel="stylesheet" href="/css/rcMenu.css?v=19" />
+        <link rel="stylesheet" href="/css/memberMenu.css?v=19" />
+        <link rel="stylesheet" href="/css/splashScreen.css?v=19" />
+        <link rel="stylesheet" href="/css/messageBar.css?v=19" />
+        <link rel="stylesheet" href="/css/web.css?v=19" />
+        <link rel="stylesheet" href="/css/modern.css?v=19" />
         <link id="themeLink" rel="stylesheet" href="" />
     </head>
     <body>
@@ -140,7 +140,7 @@
                 <div id="channel-elements"></div>
             </div>
 
-            <!-- Bottom status bar: bot avatar + name (no settings panel) -->
+            <!-- Bottom status bar: bot avatar + name + settings -->
             <div id="userSettings">
                 <div id="userCard">
                     <p id="userCardBot">BOT</p>
@@ -152,6 +152,14 @@
                     />
                     <p id="userCardName">User</p>
                     <p id="userCardDiscrim">#0000</p>
+                    <button id="settingsBtn" title="Settings" aria-label="Settings">
+                        <img
+                            id="settingsBtnIcon"
+                            src="/resources/icons/settings.svg"
+                            alt="Settings"
+                            draggable="false"
+                        />
+                    </button>
                 </div>
             </div>
 
@@ -188,7 +196,52 @@
                 </div>
             </div>
 
-            <div id="memberBar"></div>
+            <!-- Settings modal -->
+        <div id="settingsModal" class="hidden">
+            <div id="settingsBox" role="dialog" aria-modal="true" aria-label="Settings">
+                <div id="settingsHeader">
+                    <h3>Settings</h3>
+                    <button id="settingsClose" title="Close" aria-label="Close">✕</button>
+                </div>
+                <div id="settingsBody">
+                    <p class="settingsSectionLabel">Appearance</p>
+                    <div class="settingsOption">
+                        <div class="settingsOptionTexts">
+                            <span class="settingsOptionTitle">Theme</span>
+                            <span class="settingsOptionDesc">Pick how Botcord looks. Saved automatically.</span>
+                        </div>
+                    </div>
+                    <div id="themeChoices">
+                        <button class="themeChoice" data-theme-value="light">
+                            <span class="themeSwatch themeSwatchLight"></span>
+                            <span class="themeTexts">
+                                <span class="themeName">Light</span>
+                                <span class="themeSub">Bright and clean</span>
+                            </span>
+                            <span class="themeRadio"></span>
+                        </button>
+                        <button class="themeChoice" data-theme-value="dark">
+                            <span class="themeSwatch themeSwatchDark"></span>
+                            <span class="themeTexts">
+                                <span class="themeName">Dark</span>
+                                <span class="themeSub">The classic look</span>
+                            </span>
+                            <span class="themeRadio"></span>
+                        </button>
+                        <button class="themeChoice" data-theme-value="night">
+                            <span class="themeSwatch themeSwatchNight"></span>
+                            <span class="themeTexts">
+                                <span class="themeName">Night</span>
+                                <span class="themeSub">Pure onyx black</span>
+                            </span>
+                            <span class="themeRadio"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="memberBar"></div>
         </div>
     </body>
 </html>
