@@ -9,7 +9,7 @@
 
 // Must match SERVER_VERSION in server.py. Checked on startup so a stale
 // server or cached site fails with a clear message instead of hanging.
-const CLIENT_VERSION = 14;
+const CLIENT_VERSION = 15;
 
 const S = {
     me: null,
@@ -395,6 +395,10 @@ function errorHandler(err) {
         'BAD-EMOJI': 'Pick an emoji first',
         'FILE-TOO-LARGE': 'That file is over 25 MB — Discord will not take it',
         'BAD-UPLOAD': 'Could not read that file — try another one',
+        'UNKNOWN-STICKER': 'Sticker not found',
+        'TENOR-NOT-CONFIGURED': 'GIFs need a Tenor key — set BOTCORD_TENOR_KEY and restart the server',
+        'TENOR-FAILED': 'GIF search failed — try again in a moment',
+        'BAD-QUERY': 'Type something to search',
         'UNKNOWN-CHANNEL': 'That channel is no longer available — try another one',
         'UNKNOWN-GUILD': 'That server is no longer available — try another one',
         'MEMBER-FETCH-FAILED':
@@ -1123,6 +1127,11 @@ function messageBlock(m) {
         renderReactions(m, darkBG);
     } catch (err) {
         console.error('reactions render failed', err);
+    }
+    try {
+        renderStickers(m, darkBG);
+    } catch (err) {
+        console.error('stickers render failed', err);
     }
     // async mention pass: fills @12345… / #deleted-channel pills whose data
     // arrived after (or before) this message rendered
@@ -2318,8 +2327,18 @@ const QUICK_EMOJIS = [
 ];
 
 function reactionApiEmoji(r) {
-    // What the REST API / discord.py wants back for this pill.
-    if (r.id) return `<:${r.name}:${r.id}>`;
+    // What the REST API / discord.py wants back for this pill
+    // (animated custom emoji need the a: prefix).
+    if (r.id) {
+        let animated = false;
+        try {
+            const e = (S.emojis || []).find((x) => String(x.id) === String(r.id));
+            animated = !!(e && e.animated);
+        } catch (err) {
+            /* ignore */
+        }
+        return animated ? `<a:${r.name}:${r.id}>` : `<:${r.name}:${r.id}>`;
+    }
     return r.name;
 }
 
@@ -2535,6 +2554,37 @@ function openEmojiPicker(x, y, m) {
             }
         });
     }, 0);
+}
+
+/* ==================== message stickers ================================ */
+
+function renderStickers(m, parent) {
+    const list = m.stickers || [];
+    if (!list.length) return;
+    const wrap = el('div', 'stickers');
+    list.forEach((s) => {
+        try {
+            if (s.url) {
+                const a = document.createElement('a');
+                a.href = s.url;
+                a.target = '_blank';
+                a.rel = 'noreferrer noopener';
+                const img = document.createElement('img');
+                img.className = 'stickerImg';
+                img.src = s.url;
+                img.alt = s.name || 'sticker';
+                img.loading = 'lazy';
+                a.appendChild(img);
+                wrap.appendChild(a);
+            } else {
+                // lottie (animated JSON): no raster preview, still viewable
+                wrap.appendChild(el('div', 'stickerLottie', `🎭 ${s.name || 'sticker'}`));
+            }
+        } catch (e) {
+            /* ignore one bad sticker */
+        }
+    });
+    if (wrap.children.length) parent.appendChild(wrap);
 }
 
 /* ==================== message components V2 ==============================
@@ -2978,7 +3028,8 @@ async function sendCurrent() {
 async function sendText(content, embed, opts) {
     opts = opts || {};
     if (!S.channel) return;
-    if (!content && !embed) return;
+    const stickerIds = (opts.stickers || []).map(String).filter(Boolean).slice(0, 3);
+    if (!content && !embed && !stickerIds.length) return;
     const channel = S.channel;
     const r =
         opts.replyTo !== undefined
@@ -2991,9 +3042,11 @@ async function sendText(content, embed, opts) {
     // this is what hides network latency, exactly like Discord.
     const tempId = 'pending-' + Date.now().toString(36) + '-' + ++pendingSeq;
     const temp = makePendingMessage(tempId, channel, content, embed, r);
+    if (opts.uploadLabel) temp.uploading = { name: opts.uploadLabel };
     PendingSends.set(tempId, {
         content,
         embed,
+        stickers: stickerIds,
         reply: r,
         mention,
         channelId: channel.id,
@@ -3011,6 +3064,7 @@ async function sendText(content, embed, opts) {
         const res = await Api.sendMessage(channel.id, content, embed || null, {
             reply_to: r ? r.id : null,
             mention_author: mention,
+            sticker_ids: stickerIds.length ? stickerIds : null,
         });
         PendingSends.delete(tempId);
         if (!S.channel || S.channel.id !== channel.id) return; // switched away; refresh covers it
@@ -3126,7 +3180,7 @@ function ensureComposerButtons() {
         setCompIcon(emoji, 'emoji', '😀');
         emoji.addEventListener('click', (e) => {
             e.stopPropagation();
-            toggleComposerEmoji(emoji);
+            toggleMediaPanel();
         });
         const voice = document.createElement('button');
         voice.id = 'voiceBtn';
@@ -3213,65 +3267,540 @@ async function sendFileMessage(file, opts) {
     }
 }
 
-/* ---- composer emoji picker ---- */
+/* ---- media panel: Emojis | GIFs | Stickers (Discord-style) ----
+ * Emoji tab: frequently used + unicode catalog + per-server custom emoji.
+ * GIF tab: Tenor trending/search (needs BOTCORD_TENOR_KEY server-side).
+ * Sticker tab: per-server guild stickers. Each tab has its own search. */
 
-function closeComposerEmoji() {
-    const p = $('composerEmoji');
+const MediaPanel = { tab: 'emoji', q: { emoji: '', gif: '', sticker: '' } };
+const StickerCache = {}; // gid -> [sticker]
+const GuildEmojiCache = {}; // gid -> [emoji]
+const GifState = { items: [], next: '', loading: false, q: null, trending: null };
+let guildMediaLoading = null;
+
+function customEmojiTag(e) {
+    return e.animated ? `<a:${e.name}:${e.id}>` : `<:${e.name}:${e.id}>`;
+}
+
+// Unicode catalog from vendor-converter's idToUni table: [{name, char}].
+let UniEmojiList = null;
+function uniEmojiList() {
+    if (UniEmojiList) return UniEmojiList;
+    UniEmojiList = [];
+    try {
+        const table = typeof idToUni !== 'undefined' ? idToUni : {};
+        const seen = new Set();
+        Object.keys(table).forEach((name) => {
+            const ch = table[name];
+            if (!ch || seen.has(ch)) return;
+            seen.add(ch);
+            UniEmojiList.push({ name, char: ch });
+        });
+    } catch (e) {
+        /* ignore */
+    }
+    return UniEmojiList;
+}
+
+function freqGet() {
+    try {
+        return JSON.parse(localStorage.getItem('botcord.freqEmoji') || '{}');
+    } catch (e) {
+        return {};
+    }
+}
+
+function freqBump(key) {
+    try {
+        const m = freqGet();
+        m[key] = (m[key] || 0) + 1;
+        const top = Object.keys(m)
+            .sort((a, b) => m[b] - m[a])
+            .slice(0, 40);
+        const trimmed = {};
+        top.forEach((k) => {
+            trimmed[k] = m[k];
+        });
+        localStorage.setItem('botcord.freqEmoji', JSON.stringify(trimmed));
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+function findCustomEmoji(id) {
+    try {
+        return (S.emojis || []).find((e) => String(e.id) === String(id)) || null;
+    } catch (e) {
+        return null;
+    }
+}
+
+// Refresh per-guild emoji/sticker caches once per session (merges into the
+// flat S.emojis list too, so @-completion and lookups improve).
+async function ensureGuildMedia() {
+    if (guildMediaLoading) {
+        try {
+            await guildMediaLoading;
+        } catch (e) {
+            /* ignore */
+        }
+        return;
+    }
+    const need = (S.guilds || []).filter((g) => !GuildEmojiCache[g.id] || !StickerCache[g.id]);
+    if (!need.length) return;
+    guildMediaLoading = (async () => {
+        await Promise.all(
+            need.map(async (g) => {
+                try {
+                    const [em, st] = await Promise.all([
+                        Api.guildEmojis(g.id).catch(() => ({ emojis: [] })),
+                        Api.guildStickers(g.id).catch(() => ({ stickers: [] })),
+                    ]);
+                    GuildEmojiCache[g.id] = (em && em.emojis) || [];
+                    StickerCache[g.id] = (st && st.stickers) || [];
+                    const have = new Set((S.emojis || []).map((e) => String(e.id)));
+                    GuildEmojiCache[g.id].forEach((e) => {
+                        if (!have.has(String(e.id))) {
+                            S.emojis.push(e);
+                            have.add(String(e.id));
+                        }
+                    });
+                } catch (e) {
+                    /* per-guild failure is non-fatal */
+                }
+            })
+        );
+        try {
+            refreshLookup();
+        } catch (e) {
+            /* ignore */
+        }
+    })();
+    try {
+        await guildMediaLoading;
+    } finally {
+        guildMediaLoading = null;
+    }
+}
+
+function closeMediaPanel() {
+    const p = $('mediaPanel');
     if (p) p.remove();
 }
 
-function toggleComposerEmoji(anchorBtn) {
-    const old = $('composerEmoji');
-    closeComposerEmoji();
+function toggleMediaPanel(forceTab) {
+    const old = $('mediaPanel');
     closeEmojiPicker();
-    if (old) return; // was open: just close
+    if (old) {
+        const was = MediaPanel.tab;
+        old.remove();
+        if (!forceTab || forceTab === was) return;
+    }
+    openMediaPanel(forceTab || MediaPanel.tab || 'emoji');
+}
+
+function openMediaPanel(tab) {
     if (!S.channel) {
         toast('Select a channel first');
         return;
     }
-    const pop = el('div', 'emojiPicker');
-    pop.id = 'composerEmoji';
-    QUICK_EMOJIS.forEach((ch) => {
-        const b = el('div', 'emojiPick', ch);
-        b.title = ch;
-        b.addEventListener('click', () => {
-            insertAtCursor(ch);
-            closeComposerEmoji();
-        });
-        pop.appendChild(b);
+    closeMediaPanel();
+    MediaPanel.tab = tab;
+    const panel = el('div', '');
+    panel.id = 'mediaPanel';
+    // search (per-tab memory, like Discord)
+    const search = document.createElement('input');
+    search.id = 'mediaSearch';
+    search.autocomplete = 'off';
+    search.spellcheck = false;
+    search.value = MediaPanel.q[tab] || '';
+    search.addEventListener('input', () => {
+        MediaPanel.q[MediaPanel.tab] = search.value;
+        if (MediaPanel.tab === 'gif') {
+            gifSearchSoon(search.value);
+        } else {
+            renderMediaPane();
+        }
     });
-    const customs = (S.emojis || []).slice(0, 48);
-    if (customs.length) {
-        pop.appendChild(el('div', 'emojiSep'));
-        customs.forEach((e) => {
-            const b = el('div', 'emojiPick');
-            b.title = `:${e.name}:`;
-            const img = el('img', 'emojiPickImg');
-            img.src = e.url;
-            img.alt = e.name;
-            img.loading = 'lazy';
-            b.appendChild(img);
-            b.addEventListener('click', () => {
-                insertAtCursor(`<:${e.name}:${e.id}>`);
-                closeComposerEmoji();
-            });
-            pop.appendChild(b);
+    search.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter' && MediaPanel.tab === 'gif') {
+            e.preventDefault();
+            gifSearchNow(search.value);
+        }
+        if (e.key === 'Escape') closeMediaPanel();
+    });
+    search.addEventListener('click', (e) => e.stopPropagation());
+    panel.appendChild(search);
+    // tabs
+    const tabs = el('div', 'mediaTabs');
+    [
+        ['emoji', 'Emojis'],
+        ['gif', 'GIFs'],
+        ['sticker', 'Stickers'],
+    ].forEach(([key, label]) => {
+        const b = el('button', 'mediaTab' + (key === tab ? ' active' : ''), label);
+        b.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (MediaPanel.tab === key) return;
+            MediaPanel.tab = key;
+            const s = $('mediaSearch');
+            if (s) {
+                s.value = MediaPanel.q[key] || '';
+                s.placeholder = searchPlaceholder(key);
+            }
+            renderMediaTabs();
+            renderMediaPane();
         });
+        tabs.appendChild(b);
+    });
+    panel.appendChild(tabs);
+    const body = el('div', '');
+    body.id = 'mediaBody';
+    panel.appendChild(body);
+    document.body.appendChild(panel);
+    // anchor above the message bar, like Discord's picker
+    try {
+        const bar = $('messageBar');
+        if (bar) {
+            const r = bar.getBoundingClientRect();
+            panel.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+            panel.style.bottom = Math.max(8, window.innerHeight - r.top + 8) + 'px';
+        }
+    } catch (e) {
+        /* default CSS position applies */
     }
-    document.body.appendChild(pop);
-    const br = anchorBtn.getBoundingClientRect();
-    const r = pop.getBoundingClientRect();
-    pop.style.left =
-        Math.max(8, Math.min(br.left, window.innerWidth - r.width - 8)) + 'px';
-    pop.style.top = Math.max(8, br.top - r.height - 8) + 'px';
+    search.placeholder = searchPlaceholder(tab);
+    renderMediaPane();
     setTimeout(() => {
         document.addEventListener('click', function h(ev) {
-            if (!pop.contains(ev.target)) {
-                closeComposerEmoji();
+            const p = $('mediaPanel');
+            if (!p || (!p.contains(ev.target) && !(ev.target.closest && ev.target.closest('#emojiBtn')))) {
+                closeMediaPanel();
                 document.removeEventListener('click', h);
             }
         });
     }, 0);
+    // guild media in the background; re-paint when it lands
+    ensureGuildMedia().then(() => {
+        if ($('mediaPanel')) renderMediaPane();
+    });
+}
+
+function searchPlaceholder(tab) {
+    if (tab === 'gif') return 'Search Tenor GIFs';
+    if (tab === 'sticker') return 'Search stickers';
+    return 'Search emojis';
+}
+
+function renderMediaTabs() {
+    const tabs = document.querySelectorAll('#mediaPanel .mediaTab');
+    tabs.forEach((b) => {
+        const isActive =
+            (b.innerText === 'Emojis' && MediaPanel.tab === 'emoji') ||
+            (b.innerText === 'GIFs' && MediaPanel.tab === 'gif') ||
+            (b.innerText === 'Stickers' && MediaPanel.tab === 'sticker');
+        b.classList.toggle('active', isActive);
+    });
+}
+
+function renderMediaPane() {
+    const body = $('mediaBody');
+    if (!body) return;
+    body.innerHTML = '';
+    if (MediaPanel.tab === 'gif') renderGifPane(body);
+    else if (MediaPanel.tab === 'sticker') renderStickerPane(body);
+    else renderEmojiPane(body);
+}
+
+function mediaSection(body, title, iconUrl) {
+    const h = el('div', 'mediaSectionTitle');
+    if (iconUrl) {
+        const img = el('img', 'mediaSectionIcon');
+        img.src = iconUrl;
+        img.loading = 'lazy';
+        h.appendChild(img);
+    }
+    h.appendChild(el('span', '', title));
+    body.appendChild(h);
+    const grid = el('div', 'mediaGrid');
+    body.appendChild(grid);
+    return grid;
+}
+
+/* ---- emoji tab ---- */
+
+function pickUnicodeEmoji(ch) {
+    insertAtCursor(ch);
+    freqBump('u:' + ch);
+}
+
+function pickCustomEmoji(e) {
+    insertAtCursor(customEmojiTag(e));
+    freqBump('c:' + e.id);
+}
+
+function renderEmojiPane(body) {
+    const q = (MediaPanel.q.emoji || '').trim().toLowerCase();
+    if (q) {
+        const grid = mediaSection(body, 'Search results');
+        let n = 0;
+        uniEmojiList().forEach((u) => {
+            if (n >= 60) return;
+            if (!u.name.includes(q)) return;
+            const b = el('div', 'emojiPick', u.char);
+            b.title = `:${u.name}:`;
+            b.addEventListener('click', () => pickUnicodeEmoji(u.char));
+            grid.appendChild(b);
+            n++;
+        });
+        (S.emojis || []).forEach((e) => {
+            if (n >= 80) return;
+            if (!String(e.name || '').toLowerCase().includes(q)) return;
+            grid.appendChild(customEmojiCell(e));
+            n++;
+        });
+        if (!n) body.appendChild(el('div', 'mediaEmpty', 'No emojis match.'));
+        return;
+    }
+    // frequently used
+    const freq = freqGet();
+    const freqKeys = Object.keys(freq).sort((a, b) => freq[b] - freq[a]);
+    if (freqKeys.length) {
+        const grid = mediaSection(body, 'Frequently used');
+        freqKeys.slice(0, 24).forEach((k) => {
+            if (k.startsWith('u:')) {
+                const ch = k.slice(2);
+                const b = el('div', 'emojiPick', ch);
+                b.title = ch;
+                b.addEventListener('click', () => pickUnicodeEmoji(ch));
+                grid.appendChild(b);
+            } else if (k.startsWith('c:')) {
+                const e = findCustomEmoji(k.slice(2));
+                if (e) grid.appendChild(customEmojiCell(e));
+            }
+        });
+    }
+    // unicode catalog
+    const ugrid = mediaSection(body, 'Emoji');
+    uniEmojiList().forEach((u) => {
+        const b = el('div', 'emojiPick', u.char);
+        b.title = `:${u.name}:`;
+        b.addEventListener('click', () => pickUnicodeEmoji(u.char));
+        ugrid.appendChild(b);
+    });
+    // per-server custom emoji
+    (S.guilds || []).forEach((g) => {
+        const list = GuildEmojiCache[g.id] !== undefined ? GuildEmojiCache[g.id] : (S.emojis || []).filter((e) => String(e.guild_id || '') === String(g.id));
+        if (!list.length) return;
+        const grid = mediaSection(body, g.name || 'Server', g.icon);
+        list.forEach((e) => grid.appendChild(customEmojiCell(e)));
+    });
+}
+
+function customEmojiCell(e) {
+    const b = el('div', 'emojiPick customPick');
+    b.title = `:${e.name}:`;
+    const img = el('img', 'emojiPickImg');
+    img.src = e.url;
+    img.alt = e.name;
+    img.loading = 'lazy';
+    b.appendChild(img);
+    b.addEventListener('click', () => pickCustomEmoji(e));
+    return b;
+}
+
+/* ---- GIF tab (Tenor) ---- */
+
+let gifDebounce = null;
+
+function gifSearchSoon(q) {
+    if (gifDebounce) clearTimeout(gifDebounce);
+    gifDebounce = setTimeout(() => gifSearchNow(q), 450);
+}
+
+async function gifSearchNow(q) {
+    q = (q || '').trim();
+    MediaPanel.q.gif = q;
+    if (!q) {
+        GifState.q = null;
+        renderMediaPane();
+        return;
+    }
+    GifState.loading = true;
+    GifState.q = q;
+    GifState.items = [];
+    GifState.next = '';
+    renderMediaPane();
+    try {
+        const res = await Api.tenorSearch(q);
+        if (MediaPanel.tab !== 'gif' || MediaPanel.q.gif.trim() !== q) return; // stale
+        GifState.items = (res && res.gifs) || [];
+        GifState.next = (res && res.next) || '';
+    } catch (e) {
+        GifState.items = [];
+        GifState.next = '';
+        GifState.error = (e && e.code) || 'TENOR-FAILED';
+    } finally {
+        GifState.loading = false;
+        if ($('mediaPanel') && MediaPanel.tab === 'gif') renderMediaPane();
+    }
+}
+
+async function gifLoadMore() {
+    if (GifState.loading || !GifState.next) return;
+    GifState.loading = true;
+    renderMediaPane();
+    try {
+        const res = await Api.tenorSearch(GifState.q || '', GifState.next);
+        if (MediaPanel.tab !== 'gif') return;
+        GifState.items = GifState.items.concat((res && res.gifs) || []);
+        GifState.next = (res && res.next) || '';
+    } catch (e) {
+        /* keep what we have */
+    } finally {
+        GifState.loading = false;
+        if ($('mediaPanel') && MediaPanel.tab === 'gif') renderMediaPane();
+    }
+}
+
+async function gifEnsureTrending() {
+    if (GifState.trending || GifState.loading) return;
+    GifState.loading = true;
+    try {
+        const res = await Api.tenorTrending();
+        GifState.trending = (res && res.gifs) || [];
+        GifState.trendingError = null;
+    } catch (e) {
+        GifState.trending = [];
+        GifState.trendingError = (e && e.code) || 'TENOR-FAILED';
+    } finally {
+        GifState.loading = false;
+    }
+}
+
+function renderGifPane(body) {
+    const q = (MediaPanel.q.gif || '').trim();
+    if (!q && !GifState.trending && !GifState.trendingError) {
+        body.appendChild(el('div', 'mediaSpinner', 'Loading…'));
+        gifEnsureTrending().then(() => {
+            if ($('mediaPanel') && MediaPanel.tab === 'gif') renderMediaPane();
+        });
+        return;
+    }
+    const items = q ? GifState.items : GifState.trending || [];
+    const err = q ? GifState.error : GifState.trendingError;
+    if (err === 'TENOR-NOT-CONFIGURED') {
+        const note = el('div', 'mediaNotice');
+        note.innerHTML =
+            'GIFs need a free Tenor API key.<br><br>Set <code>BOTCORD_TENOR_KEY</code> ' +
+            'where <code>server.py</code> runs and restart it.<br>' +
+            'Get one at <b>developers.google.com/tenor</b> (Guides → Quickstart).';
+        body.appendChild(note);
+        return;
+    }
+    if (GifState.loading && !items.length) {
+        body.appendChild(el('div', 'mediaSpinner', 'Loading…'));
+        return;
+    }
+    if (err && !items.length) {
+        const note = el('div', 'mediaNotice');
+        note.appendChild(el('div', '', 'GIF search failed — try again in a moment.'));
+        const retry = el('button', 'settingsUpdateBtn', 'Retry');
+        retry.addEventListener('click', () => {
+            GifState.error = null;
+            GifState.trendingError = null;
+            renderMediaPane();
+        });
+        note.appendChild(retry);
+        body.appendChild(note);
+        return;
+    }
+    if (!items.length) {
+        body.appendChild(el('div', 'mediaEmpty', q ? 'No GIFs found.' : 'No trending GIFs right now.'));
+        return;
+    }
+    const grid = el('div', 'gifGrid');
+    items.forEach((g) => {
+        const cell = el('div', 'gifCell');
+        cell.title = g.title || 'GIF';
+        const img = el('img', 'gifThumb');
+        img.src = g.preview_url || g.gif_url;
+        img.alt = g.title || 'GIF';
+        img.loading = 'lazy';
+        cell.appendChild(img);
+        cell.addEventListener('click', () => sendGif(g.gif_url || g.page_url));
+        grid.appendChild(cell);
+    });
+    body.appendChild(grid);
+    if (GifState.loading) body.appendChild(el('div', 'mediaSpinner', 'Loading…'));
+    else if (q && GifState.next) {
+        const more = el('button', 'settingsUpdateBtn', 'Load more');
+        more.addEventListener('click', gifLoadMore);
+        body.appendChild(more);
+    }
+}
+
+async function sendGif(gifUrl) {
+    if (!gifUrl) return;
+    if (!S.channel) {
+        toast('Select a channel first');
+        return;
+    }
+    closeMediaPanel();
+    await sendText(gifUrl, null, {});
+}
+
+/* ---- sticker tab ---- */
+
+function renderStickerPane(body) {
+    const q = (MediaPanel.q.sticker || '').trim().toLowerCase();
+    let any = false;
+    (S.guilds || []).forEach((g) => {
+        let list = StickerCache[g.id];
+        if (list === undefined) {
+            // flat fallback until ensureGuildMedia lands
+            list = [];
+        }
+        const shown = q ? list.filter((s) => String(s.name || '').toLowerCase().includes(q)) : list;
+        if (!shown.length) return;
+        any = true;
+        const grid = mediaSection(body, g.name || 'Server', g.icon);
+        shown.forEach((s) => grid.appendChild(stickerCell(s)));
+    });
+    if (!any) {
+        body.appendChild(
+            el('div', 'mediaEmpty', q ? 'No stickers match.' : 'No guild stickers — add some in Server Settings → Stickers.')
+        );
+    }
+}
+
+function stickerCell(s) {
+    const b = el('div', 'stickerCell');
+    b.title = s.name || 'sticker';
+    if (s.url) {
+        const img = el('img', 'stickerThumb');
+        img.src = s.url;
+        img.alt = s.name || 'sticker';
+        img.loading = 'lazy';
+        b.appendChild(img);
+    } else {
+        b.appendChild(el('div', 'stickerLottieBadge', '🎭'));
+    }
+    b.addEventListener('click', () => sendSticker(s.id, s.name));
+    return b;
+}
+
+async function sendSticker(stickerId, name) {
+    if (!S.channel) {
+        toast('Select a channel first');
+        return;
+    }
+    closeMediaPanel();
+    await sendText('', null, {
+        stickers: [String(stickerId)],
+        uploadLabel: `sticker: ${name || ''}`.trim(),
+    });
 }
 
 /* ---- voice messages ---- */
@@ -3503,7 +4032,12 @@ async function retrySend(tempId) {
         });
         return;
     }
-    await sendText(p.content, p.embed, { replyTo: p.reply, mention: p.mention });
+    await sendText(p.content, p.embed, {
+        replyTo: p.reply,
+        mention: p.mention,
+        stickers: p.stickers || [],
+        uploadLabel: p.msg && p.msg.uploading ? p.msg.uploading.name : undefined,
+    });
 }
 
 /* ============================ incoming events ============================ */
@@ -3897,7 +4431,7 @@ function wireStaticUI() {
             closeEmbedModal();
             hideMentionSuggest();
             closeEmojiPicker();
-            closeComposerEmoji();
+            closeMediaPanel();
             cancelReply();
         }
     });

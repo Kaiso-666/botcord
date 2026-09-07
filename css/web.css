@@ -306,6 +306,7 @@
 .messageBlock > .reactions,
 .messageBlock > .v2wrap,
 .messageBlock > .v2poll,
+.messageBlock > .stickers,
 .messageBlock > .linkPreview,
 .messageBlock > .previewImage,
 .messageBlock > video.previewImage,
@@ -318,6 +319,7 @@
 .messageBlock:not(.firstmsg) > .reactions,
 .messageBlock:not(.firstmsg) > .v2wrap,
 .messageBlock:not(.firstmsg) > .v2poll,
+.messageBlock:not(.firstmsg) > .stickers,
 .messageBlock:not(.firstmsg) > .linkPreview,
 .messageBlock:not(.firstmsg) > .previewImage,
 .messageBlock:not(.firstmsg) > video.previewImage,
@@ -733,6 +735,219 @@
 
 .reaction.me .reactionCount {
     color: #c9cdfb;
+}
+
+/* ==================== media panel (emoji/gif/sticker) ================= */
+
+#mediaPanel {
+    position: fixed;
+    z-index: 9400;
+    width: 400px;
+    max-width: calc(100vw - 16px);
+    height: 380px;
+    max-height: calc(100vh - 120px);
+    background: #2b2d31;
+    border: 1px solid #1f2124;
+    border-radius: 12px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#mediaSearch {
+    margin: 12px 12px 8px;
+    background: #1e1f22;
+    border: none;
+    border-radius: 6px;
+    color: #dbdee1;
+    padding: 8px 12px;
+    font-size: 14px;
+    outline: none;
+}
+
+#mediaSearch::placeholder {
+    color: #949ba4;
+}
+
+.mediaTabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 12px 8px;
+    border-bottom: 1px solid #35373c;
+}
+
+.mediaTab {
+    flex: 1;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: #b5bac1;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 6px 0;
+    cursor: pointer;
+}
+
+.mediaTab:hover {
+    background: #35373c;
+    color: #dbdee1;
+}
+
+.mediaTab.active {
+    background: #404249;
+    color: #fff;
+}
+
+#mediaBody {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 12px 12px;
+    min-height: 0;
+}
+
+#mediaBody::-webkit-scrollbar {
+    width: 8px;
+}
+
+#mediaBody::-webkit-scrollbar-thumb {
+    background: #1a1b1e;
+    border-radius: 4px;
+}
+
+.mediaSectionTitle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #b5bac1;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 10px 0 6px;
+}
+
+.mediaSectionIcon {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+}
+
+.mediaGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, 38px);
+    gap: 2px;
+}
+
+.mediaGrid .emojiPick {
+    width: 38px;
+    height: 38px;
+    font-size: 26px;
+}
+
+.mediaGrid .emojiPickImg {
+    width: 30px;
+    height: 30px;
+}
+
+.mediaEmpty,
+.mediaNotice {
+    color: #949ba4;
+    font-size: 14px;
+    text-align: center;
+    padding: 24px 12px;
+    line-height: 1.5;
+}
+
+.mediaNotice code {
+    background: #1e1f22;
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: #dbdee1;
+}
+
+.mediaSpinner {
+    color: #949ba4;
+    text-align: center;
+    padding: 24px;
+}
+
+.gifGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+.gifCell {
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+    background: #1e1f22;
+    min-height: 80px;
+}
+
+.gifCell:hover {
+    outline: 2px solid #5865f2;
+}
+
+.gifThumb {
+    width: 100%;
+    height: 120px;
+    object-fit: cover;
+    display: block;
+}
+
+.stickerCell {
+    width: 76px;
+    height: 76px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    cursor: pointer;
+    padding: 4px;
+}
+
+.stickerCell:hover {
+    background: #35373c;
+}
+
+.stickerThumb {
+    max-width: 100%;
+    max-height: 100%;
+}
+
+.stickerLottieBadge {
+    font-size: 30px;
+}
+
+/* stickers inside messages */
+.stickers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 4px 0;
+}
+
+.stickerImg {
+    width: 160px;
+    height: 160px;
+    object-fit: contain;
+}
+
+.stickerLottie {
+    background: #2f3136;
+    border-radius: 8px;
+    padding: 10px 14px;
+    color: #dbdee1;
+}
+
+@media (max-width: 480px) {
+    #mediaPanel {
+        left: 8px !important;
+        right: 8px !important;
+        width: auto;
+    }
 }
 
 .emojiPicker {

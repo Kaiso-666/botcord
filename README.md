@@ -75,6 +75,8 @@ For a public website you should still:
 | `BOTCORD_MAX_SESSIONS` | `50` | Max concurrent browser sessions |
 | `BOTCORD_SESSION_TIMEOUT` | `86400` | Idle seconds before a session's bot is disconnected (24 h) |
 | `BOTCORD_LOGIN_LIMIT` / `BOTCORD_LOGIN_WINDOW` | `10` / `300` | Max logins per IP per window (seconds) |
+| `BOTCORD_MAX_UPLOAD_BYTES` | `26214400` | Max attachment bytes per message (25 MB) |
+| `BOTCORD_TENOR_KEY` | *(none)* | Tenor GIF API key — enables the GIFs tab (free at developers.google.com/tenor, Guides → Quickstart) |
 | `HOST` / `PORT` | `127.0.0.1` / `8080` | Bind address and port |
 
 Each logged-in session holds one Discord gateway connection, so size
@@ -126,6 +128,9 @@ silently. The usual causes:
   normal once the server confirms it (red + click-to-retry on failure)
 * Composer: attachment (+) button, voice-message recorder (🎤, sent as an
   audio file), emoji picker (😀, unicode + server emoji); uploads cap 25 MB
+* Media panel (😀 button): Emojis / GIFs / Stickers tabs with per-tab
+  search — frequent + unicode + per-server emoji, Tenor GIFs, per-server
+  stickers (click a GIF/sticker to send it instantly)
 * Smart timestamps (time-only for today) with labeled Today / Yesterday /
   date dividers between days
 * Discord-style shimmer skeletons while a channel's messages load
@@ -190,10 +195,14 @@ stores it automatically); without it the API answers `NO-SESSION`.
 | GET | `/api/dms` | DM channels + recipients |
 | POST | `/api/dms` | `{user_id}` → open/reuse a DM → `{channel_id, recipient}` |
 | GET | `/api/emojis` | bot emoji list |
+| GET | `/api/guilds/{id}/emojis` | per-server custom emoji |
+| GET | `/api/guilds/{id}/stickers` | per-server stickers |
 | POST | `/api/resolve` | `{users[], channels[], roles[]}` → display names for unknown ids |
+| GET | `/api/tenor/trending` | trending GIFs (needs `BOTCORD_TENOR_KEY`) |
+| GET | `/api/tenor/search?q=&pos=` | Tenor GIF search, paged (needs `BOTCORD_TENOR_KEY`) |
 | GET | `/api/channels/{id}/messages?limit&before&after` | messages, oldest first |
 | GET | `/api/channels/{id}/messages/{mid}` | single message (authoritative reactions/components state) |
-| POST | `/api/channels/{id}/messages` | `{content?, embed?, reply_to?, mention_author?}` |
+| POST | `/api/channels/{id}/messages` | `{content?, embed?, reply_to?, mention_author?, sticker_ids?}` |
 | PATCH | `/api/channels/{id}/messages/{mid}` | `{content}` |
 | DELETE | `/api/channels/{id}/messages/{mid}` | — |
 | POST | `/api/channels/{id}/bulk-delete` | `{count}` (purge) |

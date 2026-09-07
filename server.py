@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import discord
-from aiohttp import WSMsgType, web
+from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
@@ -35,7 +35,7 @@ WEB_DIR = BASE_DIR / "web"
 # Bump whenever the REST/WS contract changes. The site checks this on
 # startup and tells the user to restart / hard-refresh on mismatch
 # instead of hanging on the loader forever.
-SERVER_VERSION = 14
+SERVER_VERSION = 15
 
 log = logging.getLogger("botcord")
 
@@ -289,6 +289,71 @@ def reference_json(m) -> dict | None:
         return None
 
 
+def emoji_json(e, guild=None) -> dict:
+    try:
+        gid = str(getattr(guild or getattr(e, "guild", None), "id", "") or "")
+    except Exception:
+        gid = ""
+    gname = ""
+    if gid:
+        try:
+            gname = getattr(guild or getattr(e, "guild", None), "name", "") or ""
+        except Exception:
+            gname = ""
+    return {
+        "id": str(e.id),
+        "name": e.name,
+        "animated": bool(e.animated),
+        "url": str(e.url),
+        "guild_id": gid or None,
+        "guild_name": gname or None,
+    }
+
+
+def sticker_json(s, guild=None) -> dict:
+    try:
+        fmt = getattr(s, "format", None)
+        fmt_name = str(getattr(fmt, "name", fmt) or "")
+    except Exception:
+        fmt_name = ""
+    try:
+        url = getattr(s, "url", None)
+        url = str(url) if url else None
+    except Exception:
+        url = None
+    try:
+        gid = str(getattr(guild, "id", "") or "")
+    except Exception:
+        gid = ""
+    return {
+        "id": str(s.id),
+        "name": getattr(s, "name", ""),
+        "format": fmt_name,
+        "url": url,
+        "guild_id": gid or None,
+    }
+
+
+def find_stickers(guilds, ids):
+    """Resolve sticker ids against cached guilds (no API calls)."""
+    found = []
+    want = [str(i) for i in (ids or [])[:3] if str(i).isdigit()]
+    for sid in want:
+        hit = None
+        for g in guilds or []:
+            try:
+                st = g.get_sticker(int(sid))
+            except Exception:
+                st = None
+            if st is not None:
+                hit = st
+                break
+        if hit is None:
+            return None
+        found.append(hit)
+    return found
+
+
 def message_json(m) -> dict:
     try:
         clean = m.clean_content
@@ -351,6 +416,10 @@ def message_json(m) -> dict:
         reactions = [reaction_json(r) for r in (getattr(m, "reactions", []) or [])]
     except Exception:
         reactions = []
+    try:
+        stickers = [sticker_json(s) for s in (getattr(m, "stickers", []) or [])]
+    except Exception:
+        stickers = []
     components = components_json(m)
     try:
         flags = getattr(m, "flags", None)
@@ -380,6 +449,7 @@ def message_json(m) -> dict:
         "embeds": embeds,
         "attachments": attachments,
         "reactions": reactions,
+        "stickers": stickers,
         "components": components,
         "flags": flags_value,
         "is_components_v2": is_v2,
@@ -1197,17 +1267,42 @@ async def api_emojis(request):
     emojis = []
     try:
         for e in client.emojis:
-            emojis.append(
-                {
-                    "id": str(e.id),
-                    "name": e.name,
-                    "animated": bool(e.animated),
-                    "url": str(e.url),
-                }
-            )
+            emojis.append(emoji_json(e))
     except Exception:
         pass
     return web.json_response({"emojis": emojis})
+
+
+@routes.get("/api/guilds/{gid}/emojis")
+async def api_guild_emojis(request):
+    client = require_bot(request)
+    try:
+        guild = client.get_guild(int(request.match_info["gid"]))
+    except (TypeError, ValueError):
+        guild = None
+    if guild is None:
+        return web.json_response({"error": "UNKNOWN-GUILD"}, status=404)
+    try:
+        emojis = [emoji_json(e, guild) for e in (guild.emojis or [])]
+    except Exception:
+        emojis = []
+    return web.json_response({"emojis": emojis})
+
+
+@routes.get("/api/guilds/{gid}/stickers")
+async def api_guild_stickers(request):
+    client = require_bot(request)
+    try:
+        guild = client.get_guild(int(request.match_info["gid"]))
+    except (TypeError, ValueError):
+        guild = None
+    if guild is None:
+        return web.json_response({"error": "UNKNOWN-GUILD"}, status=404)
+    try:
+        stickers = [sticker_json(s, guild) for s in (guild.stickers or [])]
+    except Exception:
+        stickers = []
+    return web.json_response({"stickers": stickers})
 
 
 async def resolve_lookup(client, users, channels, roles):
@@ -1339,6 +1434,114 @@ async def api_resolve(request):
     return web.json_response(data)
 
 
+TENOR_KEY = os.environ.get("BOTCORD_TENOR_KEY", "")
+TENOR_CLIENT_KEY = os.environ.get("BOTCORD_TENOR_CLIENT_KEY", "botcord")
+TENOR_LOCALE = os.environ.get("BOTCORD_TENOR_LOCALE", "en")
+
+
+def map_tenor_results(data) -> dict:
+    """Tenor v2 payload -> plain GIF list the picker can render."""
+    out = []
+    try:
+        results = (data or {}).get("results") or []
+    except Exception:
+        results = []
+    for r in results:
+        try:
+            formats = r.get("media_formats") or {}
+            gif = formats.get("gif") or {}
+            tiny = formats.get("tinygif") or {}
+            nano = formats.get("nanogif") or {}
+            mp4 = formats.get("mp4") or {}
+            url = gif.get("url") or tiny.get("url") or ""
+            if not url:
+                continue
+            out.append(
+                {
+                    "id": str(r.get("id") or ""),
+                    "title": r.get("content_description") or r.get("title") or "",
+                    "page_url": r.get("itemurl") or "",
+                    "gif_url": url,
+                    "preview_url": nano.get("url") or tiny.get("url") or url,
+                    "mp4_url": mp4.get("url") or None,
+                    "width": gif.get("dims", [0, 0])[0] if gif.get("dims") else 0,
+                    "height": gif.get("dims", [0, 1])[1] if gif.get("dims") else 0,
+                }
+            )
+        except Exception:
+            continue
+    try:
+        nxt = (data or {}).get("next") or ""
+    except Exception:
+        nxt = ""
+    return {"gifs": out, "next": nxt}
+
+
+async def tenor_get(path: str, params: dict):
+    async with ClientSession(timeout=ClientTimeout(total=10)) as sess:
+        async with sess.get(
+            f"https://tenor.googleapis.com/v2/{path}", params=params
+        ) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"tenor HTTP {resp.status}")
+            return await resp.json()
+
+
+@routes.get("/api/tenor/trending")
+async def api_tenor_trending(request):
+    require_bot(request)
+    if not TENOR_KEY:
+        return web.json_response({"error": "TENOR-NOT-CONFIGURED"}, status=503)
+    try:
+        limit = max(1, min(int(request.query.get("limit", "12")), 20))
+    except (TypeError, ValueError):
+        limit = 12
+    try:
+        data = await tenor_get(
+            "featured",
+            {
+                "key": TENOR_KEY,
+                "client_key": TENOR_CLIENT_KEY,
+                "locale": TENOR_LOCALE,
+                "limit": limit,
+                "media_filter": "gif,tinygif,nanogif,mp4",
+            },
+        )
+    except Exception as exc:
+        return web.json_response({"error": f"TENOR-FAILED: {exc}"}, status=502)
+    return web.json_response(map_tenor_results(data))
+
+
+@routes.get("/api/tenor/search")
+async def api_tenor_search(request):
+    require_bot(request)
+    if not TENOR_KEY:
+        return web.json_response({"error": "TENOR-NOT-CONFIGURED"}, status=503)
+    query = (request.query.get("q") or "").strip()
+    if not query:
+        return web.json_response({"error": "BAD-QUERY"}, status=400)
+    try:
+        limit = max(1, min(int(request.query.get("limit", "20")), 20))
+    except (TypeError, ValueError):
+        limit = 20
+    params = {
+        "key": TENOR_KEY,
+        "client_key": TENOR_CLIENT_KEY,
+        "locale": TENOR_LOCALE,
+        "q": query,
+        "limit": limit,
+        "media_filter": "gif,tinygif,nanogif,mp4",
+    }
+    pos = (request.query.get("pos") or "").strip()
+    if pos:
+        params["pos"] = pos
+    try:
+        data = await tenor_get("search", params)
+    except Exception as exc:
+        return web.json_response({"error": f"TENOR-FAILED: {exc}"}, status=502)
+    return web.json_response(map_tenor_results(data))
+
+
 @routes.get("/api/channels/{cid}/messages")
 async def api_get_messages(request):
     client = require_bot(request)
@@ -1379,6 +1582,7 @@ async def api_send_message(request):
     reply_to = ""
     mention_author = True
     upload = None
+    sticker_ids = []
     if request.content_type.startswith("multipart/"):
         try:
             form = await request.post()
@@ -1418,7 +1622,14 @@ async def api_send_message(request):
             reply_to = str(reply_to).strip()
         except Exception:
             reply_to = ""
-    if not content.strip() and not embed_data and upload is None:
+        try:
+            raw_ids = body.get("sticker_ids") or []
+            sticker_ids = [
+                str(v).strip() for v in list(raw_ids)[:3] if str(v).strip().isdigit()
+            ]
+        except Exception:
+            sticker_ids = []
+    if not content.strip() and not embed_data and upload is None and not sticker_ids:
         return web.json_response({"error": "EMPTY-MESSAGE"}, status=400)
     if len(content) > 2000:
         return web.json_response({"error": "MESSAGE-TOO-LONG"}, status=400)
@@ -1473,6 +1684,23 @@ async def api_send_message(request):
                 ),
             )
         ]
+    # Stickers (sticker tab in the client). Resolved against cached guilds;
+    # Discord itself decides whether the bot may use them.
+    sticker_objs = []
+    if sticker_ids:
+        guilds = []
+        try:
+            if getattr(channel, "guild", None) is not None:
+                guilds.append(channel.guild)
+            for g in getattr(client, "guilds", []) or []:
+                if g not in guilds:
+                    guilds.append(g)
+        except Exception:
+            guilds = []
+        found = find_stickers(guilds, sticker_ids)
+        if found is None:
+            return web.json_response({"error": "UNKNOWN-STICKER"}, status=404)
+        sticker_objs = found
     try:
         msg = await channel.send(
             content if content.strip() else None,
@@ -1480,6 +1708,7 @@ async def api_send_message(request):
             reference=reference,
             mention_author=mention_author,
             files=files or None,
+            stickers=sticker_objs or None,
         )
     except discord.Forbidden:
         return web.json_response({"error": "MISSING-PERMISSIONS"}, status=403)

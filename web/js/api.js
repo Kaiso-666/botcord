@@ -230,6 +230,11 @@ const Api = (() => {
         guildChannels: (gid) => get(`/api/guilds/${gid}/channels`),
         guildMembers: (gid, limit) => get(`/api/guilds/${gid}/members?limit=${limit || 500}`),
         guildRoles: (gid) => get(`/api/guilds/${gid}/roles`),
+        guildEmojis: (gid) => get(`/api/guilds/${gid}/emojis`),
+        guildStickers: (gid) => get(`/api/guilds/${gid}/stickers`),
+        tenorTrending: () => get('/api/tenor/trending'),
+        tenorSearch: (q, pos) =>
+            get(`/api/tenor/search?q=${encodeURIComponent(q)}${pos ? `&pos=${encodeURIComponent(pos)}` : ''}`),
         dms: () => get('/api/dms'),
         createDM: (user_id) => post('/api/dms', { user_id }),
         emojis: () => get('/api/emojis'),
