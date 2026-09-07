@@ -1321,11 +1321,8 @@ p {
  * reply to one of your messages) gets a warm yellow wash plus a thin bar
  * on the left edge of the message block. */
 
-.messageBlock {
-    position: relative;
-}
-
 .messageBlock.mention-highlight {
+    position: relative !important;
     background-color: rgba(240, 178, 50, 0.1) !important;
     border-radius: 0 6px 6px 0;
 }
