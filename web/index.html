@@ -5,31 +5,31 @@
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Botcord Web</title>
         <!-- JS: order matters -->
-        <script src="/js/api.js?v=19" charset="utf-8"></script>
-        <script src="/js/vendor-converter.js?v=19" charset="utf-8"></script>
-        <script src="/js/format.js?v=19" charset="utf-8"></script>
-        <script src="/js/embeds.js?v=19" charset="utf-8"></script>
+        <script src="/js/api.js?v=20" charset="utf-8"></script>
+        <script src="/js/vendor-converter.js?v=20" charset="utf-8"></script>
+        <script src="/js/format.js?v=20" charset="utf-8"></script>
+        <script src="/js/embeds.js?v=20" charset="utf-8"></script>
         <script src="https://cdn.jsdelivr.net/npm/@twemoji/api/dist/twemoji.js"></script>
-        <script src="/js/app.js?v=19" charset="utf-8" defer></script>
+        <script src="/js/app.js?v=20" charset="utf-8" defer></script>
 
         <!-- CSS (reused from the desktop client) -->
-        <link rel="stylesheet" href="/css/fonts.css?v=19" />
-        <link rel="stylesheet" href="/css/master.css?v=19" />
-        <link rel="stylesheet" href="/css/titlebar.css?v=19" />
-        <link rel="stylesheet" href="/css/embeds.css?v=19" />
-        <link rel="stylesheet" href="/css/memberList.css?v=19" />
-        <link rel="stylesheet" href="/css/userSettings.css?v=19" />
-        <link rel="stylesheet" href="/css/textFormat.css?v=19" />
-        <link rel="stylesheet" href="/css/channelList.css?v=19" />
-        <link rel="stylesheet" href="/css/dmList.css?v=19" />
-        <link rel="stylesheet" href="/css/guildList.css?v=19" />
-        <link rel="stylesheet" href="/css/miscs.css?v=19" />
-        <link rel="stylesheet" href="/css/rcMenu.css?v=19" />
-        <link rel="stylesheet" href="/css/memberMenu.css?v=19" />
-        <link rel="stylesheet" href="/css/splashScreen.css?v=19" />
-        <link rel="stylesheet" href="/css/messageBar.css?v=19" />
-        <link rel="stylesheet" href="/css/web.css?v=19" />
-        <link rel="stylesheet" href="/css/modern.css?v=19" />
+        <link rel="stylesheet" href="/css/fonts.css?v=20" />
+        <link rel="stylesheet" href="/css/master.css?v=20" />
+        <link rel="stylesheet" href="/css/titlebar.css?v=20" />
+        <link rel="stylesheet" href="/css/embeds.css?v=20" />
+        <link rel="stylesheet" href="/css/memberList.css?v=20" />
+        <link rel="stylesheet" href="/css/userSettings.css?v=20" />
+        <link rel="stylesheet" href="/css/textFormat.css?v=20" />
+        <link rel="stylesheet" href="/css/channelList.css?v=20" />
+        <link rel="stylesheet" href="/css/dmList.css?v=20" />
+        <link rel="stylesheet" href="/css/guildList.css?v=20" />
+        <link rel="stylesheet" href="/css/miscs.css?v=20" />
+        <link rel="stylesheet" href="/css/rcMenu.css?v=20" />
+        <link rel="stylesheet" href="/css/memberMenu.css?v=20" />
+        <link rel="stylesheet" href="/css/splashScreen.css?v=20" />
+        <link rel="stylesheet" href="/css/messageBar.css?v=20" />
+        <link rel="stylesheet" href="/css/web.css?v=20" />
+        <link rel="stylesheet" href="/css/modern.css?v=20" />
         <link id="themeLink" rel="stylesheet" href="" />
     </head>
     <body>
@@ -237,6 +237,80 @@
                             <span class="themeRadio"></span>
                         </button>
                     </div>
+                    <p class="settingsSectionLabel settingsSectionGap">Account</p>
+                    <div class="settingsAccountRow">
+                        <img
+                            id="settingsAccountAvatar"
+                            src="/resources/images/default.png"
+                            alt=""
+                            draggable="false"
+                        />
+                        <div class="settingsAccountTexts">
+                            <span id="settingsAccountName">Not logged in</span>
+                            <span id="settingsAccountSub">Current bot token</span>
+                        </div>
+                        <button id="logoutBtn" class="settingsSecondaryBtn">Log out</button>
+                    </div>
+                    <input
+                        id="tokenInput"
+                        class="settingsInput"
+                        type="password"
+                        placeholder="New bot token…"
+                        autocomplete="off"
+                        spellcheck="false"
+                    />
+                    <div class="settingsRow">
+                        <label class="settingsCheck">
+                            <input type="checkbox" id="tokenSaveCheck" checked />
+                            Save as default
+                        </label>
+                        <button id="switchTokenBtn" class="settingsPrimaryBtn">Switch token</button>
+                    </div>
+                    <p class="settingsSectionLabel settingsSectionGap">Status</p>
+                    <div id="statusPills">
+                        <button class="statusPill selected" data-status="online">
+                            <span class="statusDot dotOnline"></span>Online
+                        </button>
+                        <button class="statusPill" data-status="idle">
+                            <span class="statusDot dotIdle"></span>Idle
+                        </button>
+                        <button class="statusPill" data-status="dnd">
+                            <span class="statusDot dotDnd"></span>Do Not Disturb
+                        </button>
+                        <button class="statusPill" data-status="invisible">
+                            <span class="statusDot dotInvisible"></span>Invisible
+                        </button>
+                    </div>
+                    <div class="settingsOptionTexts settingsGapTop">
+                        <span class="settingsOptionTitle">Activity</span>
+                    </div>
+                    <select id="activityType" class="settingsSelect">
+                        <option value="none">No activity</option>
+                        <option value="playing">Playing</option>
+                        <option value="streaming">Streaming</option>
+                        <option value="listening">Listening to</option>
+                        <option value="watching">Watching</option>
+                        <option value="competing">Competing in</option>
+                    </select>
+                    <input
+                        id="activityName"
+                        class="settingsInput"
+                        type="text"
+                        placeholder="Activity name…"
+                        autocomplete="off"
+                        spellcheck="false"
+                    />
+                    <input
+                        id="streamUrl"
+                        class="settingsInput hidden"
+                        type="text"
+                        placeholder="Stream URL (streaming only)…"
+                        autocomplete="off"
+                        spellcheck="false"
+                    />
+                    <button id="savePresenceBtn" class="settingsPrimaryBtn settingsFullBtn">
+                        Update status
+                    </button>
                 </div>
             </div>
         </div>

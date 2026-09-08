@@ -524,6 +524,30 @@ class BotcordClient(discord.Client):
     async def on_guild_remove(self, guild):
         await self.state.broadcast("guild_delete", {"id": str(guild.id)})
 
+    async def on_guild_emojis_update(self, guild, before, after):
+        try:
+            await self.state.broadcast(
+                "guild_emojis_update",
+                {
+                    "guild_id": str(guild.id),
+                    "emojis": [emoji_json(e, guild) for e in (after or [])],
+                },
+            )
+        except Exception as exc:
+            log.warning("guild_emojis_update broadcast failed: %r", exc)
+
+    async def on_guild_stickers_update(self, guild, before, after):
+        try:
+            await self.state.broadcast(
+                "guild_stickers_update",
+                {
+                    "guild_id": str(guild.id),
+                    "stickers": [sticker_json(s, guild) for s in (after or [])],
+                },
+            )
+        except Exception as exc:
+            log.warning("guild_stickers_update broadcast failed: %r", exc)
+
     async def on_message(self, message):
         await self.state.broadcast("message_create", message_json(message))
 

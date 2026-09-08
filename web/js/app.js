@@ -590,6 +590,18 @@ async function bootstrap() {
         setLoadingPerc(0.8);
         renderGuildList();
 
+        // All servers' emojis + stickers in the background (media panel,
+        // autocomplete and lookups); never blocks channel loading.
+        try {
+            ensureGuildMedia()
+                .then(() => {
+                    if ($('mediaPanel')) renderMediaPane();
+                })
+                .catch(() => {});
+        } catch (e) {
+            /* best-effort */
+        }
+
         // restore last guild, else first guild, else DM home
         const lastGuild = store.ui.lastGuild;
         if (superseded()) return;
@@ -667,6 +679,8 @@ function applyTheme(t) {
 
 function openSettings() {
     paintThemeChoices();
+    paintSettingsAccount();
+    paintStatusPills();
     const m = $('settingsModal');
     if (m) m.classList.remove('hidden');
 }
@@ -674,6 +688,99 @@ function openSettings() {
 function closeSettings() {
     const m = $('settingsModal');
     if (m) m.classList.add('hidden');
+}
+
+/* ==================== settings: account + status =======================
+ * Token switching (log out / log in with another bot token) and bot
+ * presence (status + activity), alongside the theme picker above.
+ */
+
+const PresenceSel = { status: 'online' };
+
+function paintSettingsAccount() {
+    try {
+        const me = S.me;
+        const av = $('settingsAccountAvatar');
+        if (av) av.src = (me && me.avatar) || DEFAULT_AVATAR;
+        const nm = $('settingsAccountName');
+        if (nm) {
+            nm.innerText = me
+                ? `${me.global_name || me.username}${
+                      me.discriminator && me.discriminator !== '0'
+                          ? `#${me.discriminator}`
+                          : ''
+                  }`
+                : 'Not logged in';
+        }
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+function paintStatusPills() {
+    try {
+        document.querySelectorAll('.statusPill').forEach((b) => {
+            b.classList.toggle('selected', b.dataset.status === PresenceSel.status);
+        });
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+async function doLogout() {
+    try {
+        await Api.logout();
+    } catch (e) {
+        /* still leave: the session is unusable anyway */
+    }
+    try {
+        store.defaultToken = '';
+    } catch (e) {
+        /* ignore */
+    }
+    location.reload();
+}
+
+async function doSwitchToken() {
+    const box = $('tokenInput');
+    const token = ((box && box.value) || '').trim();
+    if (!token) {
+        toast('Paste a bot token first');
+        return;
+    }
+    const save = $('tokenSaveCheck') ? !!$('tokenSaveCheck').checked : false;
+    try {
+        await doLogin(token, save);
+    } catch (e) {
+        errorHandler(e);
+        return;
+    }
+    if (box) box.value = '';
+    paintSettingsAccount();
+}
+
+async function doSavePresence() {
+    const typeSel = $('activityType');
+    const nameBox = $('activityName');
+    const urlBox = $('streamUrl');
+    const activityType = typeSel ? typeSel.value : 'none';
+    const activityName = ((nameBox && nameBox.value) || '').trim();
+    const streamUrl = ((urlBox && urlBox.value) || '').trim();
+    if (activityType !== 'none' && !activityName) {
+        toast('Give the activity a name, or set it to No activity');
+        return;
+    }
+    try {
+        await Api.updatePresence({
+            status: PresenceSel.status,
+            activity_type: activityType,
+            activity_name: activityName,
+            stream_url: streamUrl,
+        });
+        toast('Status updated');
+    } catch (e) {
+        errorHandler(e);
+    }
 }
 
 // The cog art lives in resources as settings.svg (preferred) or
@@ -3551,9 +3658,18 @@ function uniEmojiList() {
     return UniEmojiList;
 }
 
+// Usage stats for the media panel's Recent sections (emojis + stickers).
+// Values are {c: use count, t: last-used timestamp}; plain numbers from
+// older builds are upgraded on read.
 function freqGet() {
     try {
-        return JSON.parse(localStorage.getItem('botcord.freqEmoji') || '{}');
+        const raw = JSON.parse(localStorage.getItem('botcord.freqEmoji') || '{}');
+        const out = {};
+        Object.keys(raw || {}).forEach((k) => {
+            const v = raw[k];
+            out[k] = typeof v === 'number' ? { c: v, t: 0 } : v;
+        });
+        return out;
     } catch (e) {
         return {};
     }
@@ -3562,10 +3678,11 @@ function freqGet() {
 function freqBump(key) {
     try {
         const m = freqGet();
-        m[key] = (m[key] || 0) + 1;
+        const prev = m[key] || { c: 0, t: 0 };
+        m[key] = { c: (prev.c || 0) + 1, t: Date.now() };
         const top = Object.keys(m)
-            .sort((a, b) => m[b] - m[a])
-            .slice(0, 40);
+            .sort((a, b) => (m[b].t || 0) - (m[a].t || 0) || (m[b].c || 0) - (m[a].c || 0))
+            .slice(0, 60);
         const trimmed = {};
         top.forEach((k) => {
             trimmed[k] = m[k];
@@ -3573,6 +3690,19 @@ function freqBump(key) {
         localStorage.setItem('botcord.freqEmoji', JSON.stringify(trimmed));
     } catch (e) {
         /* ignore */
+    }
+}
+
+// Most-recently-used keys starting with `prefix` ('u:'/'c:'/'s:'), newest first.
+function freqRecent(prefix, limit) {
+    try {
+        const m = freqGet();
+        return Object.keys(m)
+            .filter((k) => k.startsWith(prefix))
+            .sort((a, b) => (m[b].t || 0) - (m[a].t || 0) || (m[b].c || 0) - (m[a].c || 0))
+            .slice(0, limit || 24);
+    } catch (e) {
+        return [];
     }
 }
 
@@ -3584,9 +3714,76 @@ function findCustomEmoji(id) {
     }
 }
 
-// Refresh per-guild emoji/sticker caches once per session (merges into the
-// flat S.emojis list too, so @-completion and lookups improve).
-async function ensureGuildMedia() {
+function findStickerById(id) {
+    try {
+        id = String(id);
+        const pools = Object.values(StickerCache || {});
+        for (const arr of pools) {
+            const hit = (arr || []).find((s) => String(s.id) === id);
+            if (hit) return hit;
+        }
+    } catch (e) {
+        /* ignore */
+    }
+    return null;
+}
+
+function allStickersFlat() {
+    const out = [];
+    const seen = new Set();
+    try {
+        Object.values(StickerCache || {}).forEach((arr) => {
+            (arr || []).forEach((s) => {
+                const id = String((s && s.id) || '');
+                if (!id || seen.has(id)) return;
+                seen.add(id);
+                out.push(s);
+            });
+        });
+    } catch (e) {
+        /* ignore */
+    }
+    return out;
+}
+
+// Merge one guild's fresh emoji list into the cache + flat list (shared by
+// the startup fetch and the live guild_emojis_update handler).
+function mergeGuildEmojis(gid, list) {
+    gid = String(gid || '');
+    list = list || [];
+    try {
+        GuildEmojiCache[gid] = list;
+        const ids = new Set(list.map((e) => String(e.id)));
+        S.emojis = (S.emojis || []).filter(
+            (e) => String(e.guild_id || '') !== gid || ids.has(String(e.id))
+        );
+        const have = new Set((S.emojis || []).map((e) => String(e.id)));
+        list.forEach((e) => {
+            if (!have.has(String(e.id))) {
+                S.emojis.push(e);
+                have.add(String(e.id));
+            }
+        });
+        refreshLookup();
+    } catch (e) {
+        /* never break live updates */
+    }
+}
+
+function mergeGuildStickers(gid, list) {
+    gid = String(gid || '');
+    list = list || [];
+    try {
+        StickerCache[gid] = list;
+    } catch (e) {
+        /* never break live updates */
+    }
+}
+
+// Fetch every server's emojis + stickers once (background, best-effort) and
+// merge them into the caches + flat list. `force` refetches even cached
+// guilds. Called at startup and when the media panel opens.
+async function ensureGuildMedia(force) {
     if (guildMediaLoading) {
         try {
             await guildMediaLoading;
@@ -3595,7 +3792,9 @@ async function ensureGuildMedia() {
         }
         return;
     }
-    const need = (S.guilds || []).filter((g) => !GuildEmojiCache[g.id] || !StickerCache[g.id]);
+    const need = (S.guilds || []).filter(
+        (g) => force || !GuildEmojiCache[g.id] || !StickerCache[g.id]
+    );
     if (!need.length) return;
     guildMediaLoading = (async () => {
         await Promise.all(
@@ -3605,15 +3804,8 @@ async function ensureGuildMedia() {
                         Api.guildEmojis(g.id).catch(() => ({ emojis: [] })),
                         Api.guildStickers(g.id).catch(() => ({ stickers: [] })),
                     ]);
-                    GuildEmojiCache[g.id] = (em && em.emojis) || [];
-                    StickerCache[g.id] = (st && st.stickers) || [];
-                    const have = new Set((S.emojis || []).map((e) => String(e.id)));
-                    GuildEmojiCache[g.id].forEach((e) => {
-                        if (!have.has(String(e.id))) {
-                            S.emojis.push(e);
-                            have.add(String(e.id));
-                        }
-                    });
+                    mergeGuildEmojis(g.id, (em && em.emojis) || []);
+                    mergeGuildStickers(g.id, (st && st.stickers) || []);
                 } catch (e) {
                     /* per-guild failure is non-fatal */
                 }
@@ -3812,12 +4004,23 @@ function renderEmojiPane(body) {
         if (!n) body.appendChild(el('div', 'mediaEmpty', 'No emojis match.'));
         return;
     }
-    // frequently used
-    const freq = freqGet();
-    const freqKeys = Object.keys(freq).sort((a, b) => freq[b] - freq[a]);
-    if (freqKeys.length) {
-        const grid = mediaSection(body, 'Frequently used');
-        freqKeys.slice(0, 24).forEach((k) => {
+    // recently used (unicode + custom)
+    const recentKeys = freqRecent('u:', 24).concat(freqRecent('c:', 24));
+    recentKeys.sort((a, b) => {
+        let ta = 0;
+        let tb = 0;
+        try {
+            const m = freqGet();
+            ta = (m[a] && m[a].t) || 0;
+            tb = (m[b] && m[b].t) || 0;
+        } catch (e) {
+            /* ignore */
+        }
+        return tb - ta;
+    });
+    if (recentKeys.length) {
+        const grid = mediaSection(body, 'Recent');
+        recentKeys.slice(0, 24).forEach((k) => {
             if (k.startsWith('u:')) {
                 const ch = k.slice(2);
                 const b = el('div', 'emojiPick', ch);
@@ -3830,20 +4033,20 @@ function renderEmojiPane(body) {
             }
         });
     }
-    // unicode catalog
+    // every server's custom emoji (all guilds, not just the open one)
+    (S.guilds || []).forEach((g) => {
+        const list = GuildEmojiCache[g.id] !== undefined ? GuildEmojiCache[g.id] : (S.emojis || []).filter((e) => String(e.guild_id || '') === String(g.id));
+        if (!list.length) return;
+        const grid = mediaSection(body, g.name || 'Server', g.icon);
+        list.forEach((e) => grid.appendChild(customEmojiCell(e)));
+    });
+    // default unicode catalog always last
     const ugrid = mediaSection(body, 'Emoji');
     uniEmojiList().forEach((u) => {
         const b = el('div', 'emojiPick', u.char);
         b.title = `:${u.name}:`;
         b.addEventListener('click', () => pickUnicodeEmoji(u.char));
         ugrid.appendChild(b);
-    });
-    // per-server custom emoji
-    (S.guilds || []).forEach((g) => {
-        const list = GuildEmojiCache[g.id] !== undefined ? GuildEmojiCache[g.id] : (S.emojis || []).filter((e) => String(e.guild_id || '') === String(g.id));
-        if (!list.length) return;
-        const grid = mediaSection(body, g.name || 'Server', g.icon);
-        list.forEach((e) => grid.appendChild(customEmojiCell(e)));
     });
 }
 
@@ -4004,22 +4207,42 @@ async function sendGif(gifUrl) {
 
 function renderStickerPane(body) {
     const q = (MediaPanel.q.sticker || '').trim().toLowerCase();
+    if (q) {
+        const grid = mediaSection(body, 'Search results');
+        let n = 0;
+        allStickersFlat().forEach((s) => {
+            if (n >= 60) return;
+            if (!String(s.name || '').toLowerCase().includes(q)) return;
+            grid.appendChild(stickerCell(s));
+            n++;
+        });
+        if (!n) body.appendChild(el('div', 'mediaEmpty', 'No stickers match.'));
+        return;
+    }
     let any = false;
+    // recently used stickers
+    const recentIds = freqRecent('s:', 12);
+    if (recentIds.length) {
+        const grid = mediaSection(body, 'Recent');
+        recentIds.forEach((k) => {
+            const s = findStickerById(k.slice(2));
+            if (s) {
+                grid.appendChild(stickerCell(s));
+                any = true;
+            }
+        });
+    }
+    // every server's stickers (all guilds, not just the open one)
     (S.guilds || []).forEach((g) => {
-        let list = StickerCache[g.id];
-        if (list === undefined) {
-            // flat fallback until ensureGuildMedia lands
-            list = [];
-        }
-        const shown = q ? list.filter((s) => String(s.name || '').toLowerCase().includes(q)) : list;
-        if (!shown.length) return;
+        const list = StickerCache[g.id] !== undefined ? StickerCache[g.id] : [];
+        if (!list.length) return;
         any = true;
         const grid = mediaSection(body, g.name || 'Server', g.icon);
-        shown.forEach((s) => grid.appendChild(stickerCell(s)));
+        list.forEach((s) => grid.appendChild(stickerCell(s)));
     });
     if (!any) {
         body.appendChild(
-            el('div', 'mediaEmpty', q ? 'No stickers match.' : 'No guild stickers — add some in Server Settings → Stickers.')
+            el('div', 'mediaEmpty', 'No guild stickers — add some in Server Settings → Stickers.')
         );
     }
 }
@@ -4044,6 +4267,11 @@ async function sendSticker(stickerId, name) {
     if (!S.channel) {
         toast('Select a channel first');
         return;
+    }
+    try {
+        freqBump('s:' + String(stickerId));
+    } catch (e) {
+        /* ignore */
     }
     closeMediaPanel();
     await sendText('', null, {
@@ -4565,6 +4793,16 @@ function wireSocket() {
             else showDMHome();
         }
     });
+    Api.on('guild_emojis_update', (d) => {
+        if (!d || !d.guild_id) return;
+        mergeGuildEmojis(d.guild_id, d.emojis || []);
+        if ($('mediaPanel') && MediaPanel.tab === 'emoji') renderMediaPane();
+    });
+    Api.on('guild_stickers_update', (d) => {
+        if (!d || !d.guild_id) return;
+        mergeGuildStickers(d.guild_id, d.stickers || []);
+        if ($('mediaPanel') && MediaPanel.tab === 'sticker') renderMediaPane();
+    });
     Api.on('member_add', (d) => {
         const arr = S.members[d.guild_id] || [];
         if (!arr.find((m) => m.id === d.member.id)) {
@@ -4639,6 +4877,40 @@ function wireStaticUI() {
     document.querySelectorAll('.themeChoice').forEach((b) => {
         b.addEventListener('click', () => applyTheme(b.dataset.themeValue));
     });
+    const logoutBtn = $('logoutBtn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', () => doLogout());
+    }
+    const switchBtn = $('switchTokenBtn');
+    if (switchBtn) {
+        switchBtn.addEventListener('click', () => doSwitchToken());
+    }
+    const tokenBox = $('tokenInput');
+    if (tokenBox) {
+        tokenBox.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                doSwitchToken();
+            }
+        });
+    }
+    document.querySelectorAll('.statusPill').forEach((b) => {
+        b.addEventListener('click', () => {
+            PresenceSel.status = b.dataset.status || 'online';
+            paintStatusPills();
+        });
+    });
+    const activitySel = $('activityType');
+    if (activitySel) {
+        activitySel.addEventListener('change', () => {
+            const url = $('streamUrl');
+            if (url) url.classList.toggle('hidden', activitySel.value !== 'streaming');
+        });
+    }
+    const presenceBtn = $('savePresenceBtn');
+    if (presenceBtn) {
+        presenceBtn.addEventListener('click', () => doSavePresence());
+    }
 
     // mobile drawers
     $('chanToggle').addEventListener('click', (e) => {

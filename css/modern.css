@@ -1334,7 +1334,7 @@ p {
 .messageBlock.mention-highlight::before {
     content: '';
     position: absolute;
-    left: 0;
+    left: -8px;
     top: 0;
     bottom: 0;
     width: 2px;
@@ -1829,4 +1829,202 @@ html[data-theme='night'] .themeChoice:hover {
 
 html[data-theme='night'] .themeChoice.selected {
     background: rgba(88, 101, 242, 0.16);
+}
+
+/* ==================== settings: account + status ==================== */
+
+.settingsSectionGap {
+    margin-top: 20px !important;
+}
+
+.settingsGapTop {
+    margin-top: 10px;
+}
+
+.settingsAccountRow {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: var(--bg-chat);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    margin-bottom: 10px;
+}
+
+#settingsAccountAvatar {
+    flex-shrink: 0;
+    width: 38px !important;
+    height: 38px !important;
+    min-width: 38px;
+    min-height: 38px;
+    max-width: 38px;
+    max-height: 38px;
+    border-radius: 50%;
+    object-fit: cover;
+    display: block;
+}
+
+.settingsAccountTexts {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+#settingsAccountName {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-normal);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#settingsAccountSub {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.settingsInput,
+.settingsSelect {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0 0 8px !important;
+    padding: 10px 12px !important;
+    background: var(--bg-input);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    color: var(--text-normal);
+    font-size: 14px;
+    outline: none;
+}
+
+.settingsInput::placeholder {
+    color: var(--text-faint);
+}
+
+.settingsInput:focus,
+.settingsSelect:focus {
+    border-color: var(--brand);
+}
+
+.settingsSelect {
+    cursor: pointer;
+}
+
+.settingsRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 4px;
+}
+
+.settingsCheck {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 13px;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+}
+
+.settingsCheck input {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--brand);
+    cursor: pointer;
+}
+
+.settingsPrimaryBtn {
+    background: var(--brand);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.settingsPrimaryBtn:hover {
+    background: var(--brand-hover);
+}
+
+.settingsSecondaryBtn {
+    flex-shrink: 0;
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.settingsSecondaryBtn:hover {
+    background: var(--bg-hover);
+    color: var(--text-normal);
+}
+
+.settingsFullBtn {
+    width: 100%;
+    margin-top: 4px;
+}
+
+#statusPills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.statusPill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-chat);
+    border: 1px solid var(--border-subtle);
+    border-radius: 20px;
+    color: var(--text-normal);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.statusPill:hover {
+    background: var(--bg-hover);
+}
+
+.statusPill.selected {
+    border-color: var(--brand);
+    background: rgba(88, 101, 242, 0.12);
+}
+
+.statusDot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.dotOnline {
+    background: #57f287;
+}
+
+.dotIdle {
+    background: #fee75c;
+}
+
+.dotDnd {
+    background: #ed4245;
+}
+
+.dotInvisible {
+    background: #80848e;
 }
