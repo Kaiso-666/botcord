@@ -235,6 +235,7 @@ const Api = (() => {
         tenorTrending: () => get('/api/tenor/trending'),
         tenorSearch: (q, pos) =>
             get(`/api/tenor/search?q=${encodeURIComponent(q)}${pos ? `&pos=${encodeURIComponent(pos)}` : ''}`),
+        unfurl: (url) => get(`/api/unfurl?url=${encodeURIComponent(url)}`),
         dms: () => get('/api/dms'),
         createDM: (user_id) => post('/api/dms', { user_id }),
         emojis: () => get('/api/emojis'),

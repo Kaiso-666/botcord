@@ -2028,3 +2028,86 @@ html[data-theme='night'] .themeChoice.selected {
 .dotInvisible {
     background: #80848e;
 }
+
+/* ==================== media panel refresh ==================== */
+
+.mediaRefresh {
+    flex-shrink: 0;
+    width: 30px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: #b5bac1;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 6px 0;
+}
+
+.mediaRefresh:hover {
+    background: #35373c;
+    color: #fff;
+}
+
+.mediaRefresh.spinning {
+    animation: mediaSpin 0.9s linear infinite;
+    pointer-events: none;
+}
+
+@keyframes mediaSpin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ==================== website unfurl cards ====================
+ * Discord/WhatsApp-style previews for bare page links: site row with
+ * favicon, title + description, and the page's preview image (or the
+ * Botcord brand mark when the page has none). */
+
+.linkEmbedMain {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    min-width: 0;
+}
+
+.linkEmbedTexts {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.linkEmbedThumb {
+    flex-shrink: 0;
+    width: 80px;
+    height: 80px;
+    object-fit: cover;
+    border-radius: 8px;
+    display: block;
+}
+
+.linkEmbedBrand {
+    object-fit: contain;
+    background: rgba(255, 255, 255, 0.06);
+    padding: 6px;
+    box-sizing: border-box;
+}
+
+.linkEmbedProv {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.embedFavicon {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    object-fit: contain;
+    flex-shrink: 0;
+}

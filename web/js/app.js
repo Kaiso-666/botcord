@@ -1450,6 +1450,11 @@ function messageBlock(m) {
     } catch (err) {
         console.error('link preview failed', err);
     }
+    try {
+        showLinkEmbeds(m, darkBG);
+    } catch (err) {
+        console.error('link unfurl failed', err);
+    }
     if (m.uploading) {
         const up = el('div', 'uploading');
         up.appendChild(el('span', 'uploadName', `📎 ${m.uploading.name || 'file'}`));
@@ -3801,13 +3806,24 @@ async function ensureGuildMedia(force) {
             need.map(async (g) => {
                 try {
                     const [em, st] = await Promise.all([
-                        Api.guildEmojis(g.id).catch(() => ({ emojis: [] })),
-                        Api.guildStickers(g.id).catch(() => ({ stickers: [] })),
+                        Api.guildEmojis(g.id).catch(() => null),
+                        Api.guildStickers(g.id).catch(() => null),
                     ]);
-                    mergeGuildEmojis(g.id, (em && em.emojis) || []);
-                    mergeGuildStickers(g.id, (st && st.stickers) || []);
+                    // null = request failed: leave the cache untouched so the
+                    // next open retries instead of showing an empty section
+                    if (em && Array.isArray(em.emojis)) {
+                        mergeGuildEmojis(g.id, em.emojis);
+                    }
+                    if (st && Array.isArray(st.stickers)) {
+                        mergeGuildStickers(g.id, st.stickers);
+                    }
                 } catch (e) {
                     /* per-guild failure is non-fatal */
+                    try {
+                        console.warn('guild media fetch failed for', g.id, e);
+                    } catch (err) {
+                        /* ignore */
+                    }
                 }
             })
         );
@@ -3895,6 +3911,23 @@ function openMediaPanel(tab) {
         });
         tabs.appendChild(b);
     });
+    const refresh = el('button', 'mediaRefresh', '↻');
+    refresh.title = 'Refresh emojis & stickers';
+    refresh.addEventListener('click', (e) => {
+        e.stopPropagation();
+        refresh.classList.add('spinning');
+        ensureGuildMedia(true)
+            .catch(() => {})
+            .finally(() => {
+                try {
+                    refresh.classList.remove('spinning');
+                } catch (err) {
+                    /* ignore */
+                }
+                if ($('mediaPanel')) renderMediaPane();
+            });
+    });
+    tabs.appendChild(refresh);
     panel.appendChild(tabs);
     const body = el('div', '');
     body.id = 'mediaBody';

@@ -16,15 +16,20 @@ Then open http://localhost:8080 and paste a bot token.
 
 import argparse
 import asyncio
+import html as htmlmod
 import io
+import ipaddress
 import json
 import logging
 import os
 import re
 import secrets
+import socket
 import time
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
 import discord
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
@@ -1296,7 +1301,10 @@ async def api_emojis(request):
     emojis = []
     try:
         for e in client.emojis:
-            emojis.append(emoji_json(e))
+            try:
+                emojis.append(emoji_json(e))
+            except Exception:
+                continue
     except Exception:
         pass
     return web.json_response({"emojis": emojis})
@@ -1312,7 +1320,12 @@ async def api_guild_emojis(request):
     if guild is None:
         return web.json_response({"error": "UNKNOWN-GUILD"}, status=404)
     try:
-        emojis = [emoji_json(e, guild) for e in (guild.emojis or [])]
+        emojis = []
+        for e in guild.emojis or []:
+            try:
+                emojis.append(emoji_json(e, guild))
+            except Exception:
+                continue
     except Exception:
         emojis = []
     return web.json_response({"emojis": emojis})
@@ -1328,7 +1341,12 @@ async def api_guild_stickers(request):
     if guild is None:
         return web.json_response({"error": "UNKNOWN-GUILD"}, status=404)
     try:
-        stickers = [sticker_json(s, guild) for s in (guild.stickers or [])]
+        stickers = []
+        for s in guild.stickers or []:
+            try:
+                stickers.append(sticker_json(s, guild))
+            except Exception:
+                continue
     except Exception:
         stickers = []
     return web.json_response({"stickers": stickers})
@@ -1569,6 +1587,213 @@ async def api_tenor_search(request):
     except Exception as exc:
         return web.json_response({"error": f"TENOR-FAILED: {exc}"}, status=502)
     return web.json_response(map_tenor_results(data))
+
+
+# ---------------------------------------------------------------------------
+# Link unfurls: Discord/WhatsApp-style website previews (title, description,
+# image) for bare links pasted in chat. Fetched server-side because browsers
+# would block the cross-origin reads.
+# ---------------------------------------------------------------------------
+
+UNFURL_TIMEOUT = 10
+UNFURL_MAX_BYTES = 2_000_000
+UNFURL_UA = "Botcord/1.0 (+link-preview)"
+
+# Host suffixes that never leave the local network.
+_BLOCKED_SUFFIXES = (".localhost", ".local", ".internal", ".lan", ".home")
+
+
+def _ip_public(ip) -> bool:
+    """True only for routable unicast space (no multicast — TCP can't)."""
+    try:
+        return bool(ip.is_global and not ip.is_multicast)
+    except Exception:
+        return False
+
+
+def _unfurl_host_blocked(host: str) -> bool:
+    """Literal check: loopback/private/etc. hostnames and IP literals."""
+    h = (host or "").strip().lower().rstrip(".")
+    if not h or h == "localhost" or h.endswith(_BLOCKED_SUFFIXES):
+        return True
+    try:
+        return not _ip_public(ipaddress.ip_address(h))
+    except ValueError:
+        return False  # a DNS name: resolved + checked below
+
+
+async def _unfurl_guard(host: str, port: int):
+    """Resolve a DNS name and reject it when it points at non-public space."""
+    loop = asyncio.get_running_loop()
+    try:
+        infos = await asyncio.wait_for(
+            loop.getaddrinfo(host, port, type=socket.SOCK_STREAM), timeout=5
+        )
+    except Exception as exc:
+        raise ValueError(f"DNS-FAILED: {exc}")
+    addrs = {info[4][0] for info in infos if info and len(info) >= 5}
+    if not addrs:
+        raise ValueError("DNS-FAILED")
+    for addr in addrs:
+        try:
+            if not _ip_public(ipaddress.ip_address(addr)):
+                raise ValueError("UNFURL-BLOCKED")
+        except ValueError as exc:
+            if str(exc) == "UNFURL-BLOCKED":
+                raise
+            raise ValueError("DNS-FAILED")
+
+
+class _MetaParser(HTMLParser):
+    """Collects og:/twitter:/meta tags, <title> and the site icon."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.meta: dict[str, str] = {}
+        self.title_parts: list[str] = []
+        self.in_title = False
+        self.icon: str | None = None
+
+    def handle_starttag(self, tag, attrs):
+        t = (tag or "").lower()
+        if t == "meta":
+            d = {str(k).lower(): v for k, v in (attrs or [])}
+            key = str(d.get("property") or d.get("name") or "").lower()
+            content = d.get("content")
+            if key and content and key not in self.meta:
+                self.meta[key] = str(content)
+        elif t == "title":
+            self.in_title = True
+        elif t == "link":
+            d = {str(k).lower(): v for k, v in (attrs or [])}
+            rel = str(d.get("rel") or "").lower()
+            if "icon" in rel and not self.icon and d.get("href"):
+                self.icon = str(d["href"])
+
+    def handle_data(self, data):
+        if self.in_title and sum(len(p) for p in self.title_parts) < 500:
+            self.title_parts.append(data or "")
+
+    def handle_endtag(self, tag):
+        if (tag or "").lower() == "title":
+            self.in_title = False
+
+
+def _clean_text(s: str, limit: int) -> str | None:
+    if not s:
+        return None
+    try:
+        s = htmlmod.unescape(s)
+        s = re.sub(r"\s+", " ", s).strip()
+    except Exception:
+        return None
+    if not s:
+        return None
+    return s[:limit] if len(s) > limit else s
+
+
+def _abs_http(base: str, ref: str | None) -> str | None:
+    if not ref:
+        return None
+    try:
+        u = urljoin(base, str(ref).strip())
+        p = urlparse(u)
+        if p.scheme in ("http", "https") and p.hostname:
+            return u
+    except Exception:
+        pass
+    return None
+
+
+async def fetch_unfurl(url: str) -> dict:
+    """Fetch a page and return {url, site, title, description, image, icon}."""
+    try:
+        parts = urlparse(url)
+    except Exception:
+        raise ValueError("BAD-URL")
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ValueError("BAD-URL")
+    host = parts.hostname
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    if _unfurl_host_blocked(host):
+        raise ValueError("UNFURL-BLOCKED")
+    await _unfurl_guard(host, port)
+
+    headers = {"User-Agent": UNFURL_UA, "Accept": "text/html,application/xhtml+xml"}
+    try:
+        async with ClientSession(
+            timeout=ClientTimeout(total=UNFURL_TIMEOUT), headers=headers
+        ) as sess:
+            async with sess.get(url, max_redirects=5, allow_redirects=True) as resp:
+                if resp.status != 200:
+                    raise ValueError(f"UNFURL-FAILED: HTTP {resp.status}")
+                ctype = str(resp.headers.get("Content-Type") or "").lower()
+                if "html" not in ctype:
+                    raise ValueError("UNFURL-NOT-HTML")
+                final = str(resp.url)
+                raw = await resp.content.read(UNFURL_MAX_BYTES)
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"UNFURL-FAILED: {exc}")
+
+    try:
+        text = raw.decode("utf-8", errors="replace")
+    except Exception:
+        raise ValueError("UNFURL-FAILED")
+    parser = _MetaParser()
+    try:
+        parser.feed(text[:1_000_000])
+    except Exception:
+        pass
+    meta = parser.meta
+    title = _clean_text(
+        meta.get("og:title") or meta.get("twitter:title") or "".join(parser.title_parts),
+        300,
+    )
+    desc = _clean_text(
+        meta.get("og:description")
+        or meta.get("twitter:description")
+        or meta.get("description"),
+        500,
+    )
+    image = _abs_http(final, meta.get("og:image") or meta.get("twitter:image"))
+    icon = _abs_http(final, parser.icon)
+    try:
+        site = urlparse(final).hostname or host
+    except Exception:
+        site = host
+    return {
+        "url": final,
+        "site": site,
+        "title": title,
+        "description": desc,
+        "image": image,
+        "icon": icon,
+    }
+
+
+@routes.get("/api/unfurl")
+async def api_unfurl(request):
+    require_bot(request)
+    target = (request.query.get("url") or "").strip()
+    if not target or len(target) > 2000:
+        return web.json_response({"error": "BAD-URL"}, status=400)
+    if not target.lower().startswith(("http://", "https://")):
+        return web.json_response({"error": "BAD-URL"}, status=400)
+    try:
+        data = await fetch_unfurl(target)
+    except ValueError as exc:
+        code = str(exc) or "UNFURL-FAILED"
+        if code == "UNFURL-NOT-HTML":
+            # Nothing card-worthy (file, API response…): not an error, the
+            # client simply skips the preview.
+            return web.json_response({"url": target, "site": None, "empty": True})
+        status = 403 if code == "UNFURL-BLOCKED" else 502
+        return web.json_response({"error": code}, status=status)
+    except Exception as exc:
+        return web.json_response({"error": f"UNFURL-FAILED: {exc}"}, status=502)
+    return web.json_response(data)
 
 
 @routes.get("/api/channels/{cid}/messages")

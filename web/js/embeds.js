@@ -402,6 +402,169 @@ function showLinkPreviews(msg, element) {
     }
 }
 
+// Website unfurls, Discord/WhatsApp-style: bare page links get a small card
+// with the site name, title, description and preview image. Metadata is
+// fetched server-side via /api/unfurl (browsers would block the
+// cross-origin read). Media links and links Discord already unfurled into
+// embeds/attachments are skipped so nothing renders twice.
+const MAX_LINK_EMBEDS = 2;
+const UnfurlCache = new Map(); // url -> data | null (empty/failed)
+const UnfurlPending = new Map(); // url -> in-flight promise
+
+// Brand mark for imageless pages. `longlogo.svg` wins when present, with the
+// bundled wide logo as fallback — probed once, then cached.
+const BRAND_LOGO_CANDIDATES = [
+    '/resources/icons/longlogo.svg',
+    '/resources/icons/logoLarge.svg',
+];
+let BrandLogoUrl = '/resources/icons/logoLarge.svg';
+let brandLogoProbed = false;
+
+function probeBrandLogo() {
+    if (brandLogoProbed) return;
+    brandLogoProbed = true;
+    try {
+        const img = new Image();
+        img.onload = () => {
+            BrandLogoUrl = BRAND_LOGO_CANDIDATES[0];
+        };
+        img.onerror = () => {
+            /* keep the bundled logo */
+        };
+        img.src = BRAND_LOGO_CANDIDATES[0];
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+function unfurlFor(url) {
+    if (UnfurlCache.has(url)) return Promise.resolve(UnfurlCache.get(url));
+    if (UnfurlPending.has(url)) return UnfurlPending.get(url);
+    const p = Api.unfurl(url)
+        .then((data) => {
+            const usable =
+                data && (data.title || data.description || data.image) ? data : null;
+            if (UnfurlCache.size > 150) UnfurlCache.clear();
+            UnfurlCache.set(url, usable);
+            return usable;
+        })
+        .catch(() => {
+            if (UnfurlCache.size > 150) UnfurlCache.clear();
+            UnfurlCache.set(url, null);
+            return null;
+        });
+    p.finally(() => {
+        UnfurlPending.delete(url);
+    }).catch(() => {});
+    UnfurlPending.set(url, p);
+    return p;
+}
+
+function renderLinkEmbed(data, element) {
+    let origin = '';
+    try {
+        origin = new URL(data.url).origin;
+    } catch (e) {
+        /* ignore */
+    }
+    const card = document.createElement('div');
+    card.className = 'embed linkEmbed';
+
+    if (data.site) {
+        const prov = document.createElement('p');
+        prov.className = 'embedContent embedProviderName linkEmbedProv';
+        const favSrc = data.icon || (origin ? origin + '/favicon.ico' : null);
+        if (favSrc) {
+            const fav = document.createElement('img');
+            fav.className = 'embedFavicon';
+            fav.src = favSrc;
+            fav.alt = '';
+            fav.loading = 'lazy';
+            fav.draggable = false;
+            fav.onerror = () => fav.remove();
+            prov.appendChild(fav);
+        }
+        prov.appendChild(document.createTextNode(data.site));
+        card.appendChild(prov);
+    }
+
+    const main = document.createElement('div');
+    main.className = 'linkEmbedMain';
+    card.appendChild(main);
+
+    const texts = document.createElement('div');
+    texts.className = 'linkEmbedTexts';
+    main.appendChild(texts);
+
+    const title = document.createElement('a');
+    title.className = 'embedTitle';
+    title.href = data.url;
+    title.target = '_blank';
+    title.rel = 'noreferrer noopener';
+    title.textContent = data.title || data.site || data.url;
+    texts.appendChild(title);
+
+    if (data.description) {
+        const desc = document.createElement('p');
+        desc.className = 'embedDescription embedContent';
+        desc.textContent = data.description;
+        texts.appendChild(desc);
+    }
+
+    const thumb = document.createElement('img');
+    const branded = !data.image;
+    thumb.className = 'linkEmbedThumb' + (branded ? ' linkEmbedBrand' : '');
+    thumb.src = data.image || BrandLogoUrl;
+    thumb.alt = '';
+    thumb.loading = 'lazy';
+    thumb.draggable = false;
+    if (branded) {
+        // brand art missing: fall back to a text-only card
+        thumb.onerror = () => thumb.remove();
+    } else {
+        // dead site image: swap in the brand mark instead of dropping the card
+        thumb.onerror = () => {
+            thumb.onerror = () => thumb.remove();
+            thumb.classList.add('linkEmbedBrand');
+            thumb.src = BrandLogoUrl;
+        };
+    }
+    main.appendChild(thumb);
+
+    element.appendChild(card);
+}
+
+function showLinkEmbeds(msg, element) {
+    const urls = extractLinkUrls(msg.content);
+    if (!urls.length) return;
+    const covered = collectCoveredUrls(msg);
+    const samePage = (u) => {
+        const base = String(u).split('?')[0].split('#')[0];
+        for (const c of covered) {
+            if (String(c).split('?')[0].split('#')[0] === base) return true;
+        }
+        return false;
+    };
+    probeBrandLogo();
+    let shown = 0;
+    for (const url of urls) {
+        if (shown >= MAX_LINK_EMBEDS) break;
+        if (linkPreviewKind(url)) continue; // the media preview handles it
+        if (covered.has(url) || samePage(url)) continue; // Discord unfurled it
+        shown++;
+        unfurlFor(url)
+            .then((data) => {
+                if (!data) return;
+                try {
+                    if (element.isConnected) renderLinkEmbed(data, element);
+                } catch (e) {
+                    /* ignore */
+                }
+            })
+            .catch(() => {});
+    }
+}
+
 // Attachments rendered with the same embed styles
 function showAttachment(att, element) {
     if (!att) return;
