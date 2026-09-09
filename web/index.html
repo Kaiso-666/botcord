@@ -46,7 +46,7 @@
         <div id="rcMenu"></div>
 
         <!-- Toast for quick errors -->
-        <div id="toast" class="hidden"></div>
+        <div id="toast" class="hidden" role="status" aria-live="polite"></div>
 
         <!-- Embed builder modal -->
         <div id="embedModal" class="hidden">
@@ -237,8 +237,13 @@
                             <span class="themeRadio"></span>
                         </button>
                     </div>
-                    <p class="settingsSectionLabel settingsSectionGap">Account</p>
-                    <div class="settingsAccountRow">
+                    <div class="settingsRow settingsGapTop">
+                        <label class="settingsCheck" title="Pings and DMs while this tab is in the background">
+                            <input type="checkbox" id="notifyCheck" />
+                            Desktop notifications + ping sound
+                        </label>
+                    </div>
+                    <p class="settingsSectionLabel settingsSectionGap">Account</p>                    <div class="settingsAccountRow">
                         <img
                             id="settingsAccountAvatar"
                             src="/resources/images/default.png"

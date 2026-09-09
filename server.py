@@ -26,13 +26,14 @@ import re
 import secrets
 import socket
 import time
+from collections import deque
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 import discord
-from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
+from aiohttp import ClientError, ClientSession, ClientTimeout, WSMsgType, web
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
@@ -52,8 +53,53 @@ _TOKEN_RE = re.compile(r"^[\w\-.]+$")
 _WS_CHARS = (" ", "\t", "\r", "\n")
 
 
+def _int_env(name: str, default: int, minimum: int = 1, maximum: int | None = None) -> int:
+    """Read an integer env var that can never crash startup on garbage."""
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        log.warning("bad %s=%r, using default %s", name, raw, default)
+        return default
+    if value < minimum or (maximum is not None and value > maximum):
+        log.warning("bad %s=%r, using default %s", name, raw, default)
+        return default
+    return value
+
+
 # Discord's per-file upload cap for bots without boosted limits.
-MAX_UPLOAD_BYTES = int(os.environ.get("BOTCORD_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
+# _int_env can never crash startup on a typo'd variable: warn + default.
+MAX_UPLOAD_BYTES = _int_env("BOTCORD_MAX_UPLOAD_BYTES", 25 * 1024 * 1024, 1024)
+# Hard ceiling for any single request body (uploads + a safety margin).
+# aiohttp rejects larger bodies at the protocol level, before this process
+# has to buffer them.
+MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 1024 * 1024
+
+
+class _UploadTooLarge(Exception):
+    """Internal: upload exceeded MAX_UPLOAD_BYTES while streaming."""
+
+
+def read_upload_capped(field, limit: int) -> bytes:
+    """Read an uploaded file in chunks, aborting past `limit` bytes.
+
+    The multipart body is already buffered by aiohttp (bounded by
+    MAX_REQUEST_BYTES), so this avoids a second unbounded copy and fails
+    fast instead of handing Discord a doomed file.
+    """
+    chunks = []
+    total = 0
+    while True:
+        chunk = field.file.read(256 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise _UploadTooLarge()
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def sanitize_filename(name: str) -> str:
@@ -694,13 +740,23 @@ class BotState:
     async def broadcast(self, event: str, data: dict):
         if not self.sockets:
             return
-        payload = json.dumps({"t": event, "d": data})
+        try:
+            payload = json.dumps({"t": event, "d": data})
+        except Exception:
+            return
         dead = []
-        for ws in list(self.sockets):
+
+        async def _send(ws):
             try:
-                await ws.send_str(payload)
+                # one slow/dead browser must never stall delivery to the rest
+                await asyncio.wait_for(ws.send_str(payload), timeout=2)
             except Exception:
                 dead.append(ws)
+
+        try:
+            await asyncio.gather(*[_send(ws) for ws in list(self.sockets)])
+        except Exception:
+            pass
         for ws in dead:
             self.sockets.discard(ws)
 
@@ -736,7 +792,13 @@ class BotState:
             except asyncio.CancelledError:
                 pass
             except Exception as exc:  # e.g. connection errors
-                self.login_error = f"CONNECTION-ERROR: {exc}"
+                # never echo internals to the browser; the detail is logged
+                log.warning("bot connection failed: %r", exc)
+                self.login_error = "CONNECTION-ERROR"
+            finally:
+                # wake login() immediately on failure instead of hanging the
+                # full 45s wait (success is signaled by on_ready either way)
+                self.ready_event.set()
             await self.broadcast(
                 "login_error" if self.login_error else "connected",
                 {"error": self.login_error},
@@ -788,10 +850,10 @@ WEB_PASSWORD = os.environ.get("BOTCORD_PASSWORD", "")
 # Multi-user hosting knobs. Each browser session that logs in holds one
 # discord.py gateway connection, so cap concurrent sessions and expire
 # idle ones to keep a public host healthy.
-MAX_SESSIONS = int(os.environ.get("BOTCORD_MAX_SESSIONS", "50"))
-SESSION_TIMEOUT = int(os.environ.get("BOTCORD_SESSION_TIMEOUT", "86400"))
-LOGIN_LIMIT = int(os.environ.get("BOTCORD_LOGIN_LIMIT", "10"))
-LOGIN_WINDOW = int(os.environ.get("BOTCORD_LOGIN_WINDOW", "300"))
+MAX_SESSIONS = _int_env("BOTCORD_MAX_SESSIONS", 50)
+SESSION_TIMEOUT = _int_env("BOTCORD_SESSION_TIMEOUT", 86400)
+LOGIN_LIMIT = _int_env("BOTCORD_LOGIN_LIMIT", 10)
+LOGIN_WINDOW = _int_env("BOTCORD_LOGIN_WINDOW", 300)
 
 
 class Session:
@@ -816,17 +878,22 @@ class Session:
 
 SESSIONS: dict[str, Session] = {}
 SESSIONS_LOCK = asyncio.Lock()
-LOGIN_ATTEMPTS: dict[str, list] = {}
+# Per-IP login timestamps (monotonic clock: immune to NTP jumps; bounded
+# deque: a single-IP flood can't grow memory without bound).
+LOGIN_ATTEMPTS: dict[str, deque] = {}
 
 
-def _prune_attempts(ip: str, now: float) -> list:
-    attempts = [t for t in LOGIN_ATTEMPTS.get(ip, []) if now - t < LOGIN_WINDOW]
+def _prune_attempts(ip: str, now: float) -> deque:
+    attempts = deque(
+        (t for t in LOGIN_ATTEMPTS.get(ip, ()) if now - t < LOGIN_WINDOW),
+        maxlen=64,
+    )
     LOGIN_ATTEMPTS[ip] = attempts
     return attempts
 
 
 def login_allowed(ip: str) -> bool:
-    now = time.time()
+    now = time.monotonic()
     if len(LOGIN_ATTEMPTS) > 2000:  # bound memory on public hosts
         for key in list(LOGIN_ATTEMPTS):
             _prune_attempts(key, now)
@@ -836,7 +903,7 @@ def login_allowed(ip: str) -> bool:
 
 
 def record_login_attempt(ip: str):
-    LOGIN_ATTEMPTS.setdefault(ip, []).append(time.time())
+    LOGIN_ATTEMPTS.setdefault(ip, deque(maxlen=64)).append(time.monotonic())
 
 
 async def create_session() -> Session | None:
@@ -892,14 +959,56 @@ def req_state(request) -> BotState:
 # ---------------------------------------------------------------------------
 
 
+def _latency_ms(client):
+    """Round gateway latency to ms, or None when unknown (NaN pre-heartbeat)."""
+    try:
+        ms = float(client.latency) * 1000
+    except Exception:
+        return None
+    if ms != ms or ms in (float("inf"), float("-inf")):  # NaN / infinite
+        return None
+    try:
+        return round(ms)
+    except Exception:
+        return None
+
+
 def require_bot(request):
     state = req_state(request)
-    if state.client is None or state.client.is_closed():
-        raise web.HTTPBadRequest(
+    client = state.client
+    if client is None or client.is_closed():
+        raise web.HTTPUnauthorized(
             text=json.dumps({"error": "NOT-LOGGED-IN"}),
             content_type="application/json",
         )
-    return state.client
+    if not client.is_ready():
+        # logged in but the gateway isn't usable yet: tell the client to
+        # wait, not to throw the session away and ask for the token again
+        raise web.HTTPServiceUnavailable(
+            text=json.dumps({"error": "CONNECTING"}),
+            content_type="application/json",
+        )
+    return client
+
+
+def parse_int(value, default: int, minimum: int, maximum: int) -> int:
+    """Query/body integer clamped to [minimum, maximum]; default on garbage."""
+    try:
+        n = int(str(value).strip())
+    except (TypeError, ValueError, AttributeError):
+        return default
+    return max(minimum, min(maximum, n))
+
+
+def coerce_content(value) -> str:
+    """Message text from JSON: strings pass through, numbers stringify."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    return ""
 
 
 class _MemberTimeout(Exception):
@@ -938,7 +1047,7 @@ async def get_text_channel(client, channel_id: str):
 
 
 async def fetch_history(channel, limit=50, before_id=None, after_id=None):
-    kwargs = {"limit": max(1, min(int(limit or 50), 100))}
+    kwargs = {"limit": parse_int(limit, 50, 1, 100)}
     if before_id:
         try:
             kwargs["before"] = discord.Object(id=int(before_id))
@@ -985,6 +1094,41 @@ async def fetch_history(channel, limit=50, before_id=None, after_id=None):
 # ---------------------------------------------------------------------------
 
 routes = web.RouteTableDef()
+
+
+@web.middleware
+async def request_log_middleware(request, handler):
+    """Outermost layer: stamps a request id and logs one access line.
+
+    Purely additive — never alters the response except for an
+    X-Request-Id header (quote it when reporting bugs).
+    """
+    rid = secrets.token_hex(8)
+    request["request_id"] = rid
+    start = time.monotonic()
+    status = 500
+    try:
+        resp = await handler(request)
+        status = resp.status
+        try:
+            resp.headers["X-Request-Id"] = rid
+        except Exception:
+            pass
+        return resp
+    except web.HTTPException as exc:
+        status = exc.status
+        raise
+    except Exception:
+        log.exception(
+            "unhandled error rid=%s %s %s", rid, request.method, request.path
+        )
+        raise
+    finally:
+        dur_ms = (time.monotonic() - start) * 1000
+        log.info(
+            "%s %s -> %s %.1fms rid=%s",
+            request.method, request.path, status, dur_ms, rid,
+        )
 
 
 @web.middleware
@@ -1040,6 +1184,12 @@ async def api_version(request):
     return web.json_response({"version": SERVER_VERSION, "sessions": True})
 
 
+@routes.get("/healthz")
+async def healthz(request):
+    """Unauthenticated liveness probe for uptime monitors / load balancers."""
+    return web.json_response({"ok": True, "version": SERVER_VERSION})
+
+
 @routes.get("/api/status")
 async def api_status(request):
     state = req_state(request)
@@ -1055,7 +1205,7 @@ async def api_status(request):
             "owner": state.owner,
             "is_team": state.is_team,
             "team": state.team,
-            "latency_ms": round(client.latency * 1000),
+            "latency_ms": _latency_ms(client),
         }
     )
 
@@ -1115,7 +1265,7 @@ async def api_me(request):
             "owner": state.owner,
             "is_team": state.is_team,
             "team": state.team,
-            "latency_ms": round(client.latency * 1000),
+            "latency_ms": _latency_ms(client),
         }
     )
 
@@ -1525,13 +1675,13 @@ def map_tenor_results(data) -> dict:
 
 
 async def tenor_get(path: str, params: dict):
-    async with ClientSession(timeout=ClientTimeout(total=10)) as sess:
-        async with sess.get(
-            f"https://tenor.googleapis.com/v2/{path}", params=params
-        ) as resp:
-            if resp.status != 200:
-                raise RuntimeError(f"tenor HTTP {resp.status}")
-            return await resp.json()
+    sess = await http_session()
+    async with sess.get(
+        f"https://tenor.googleapis.com/v2/{path}", params=params
+    ) as resp:
+        if resp.status != 200:
+            raise RuntimeError(f"tenor HTTP {resp.status}")
+        return await resp.json()
 
 
 @routes.get("/api/tenor/trending")
@@ -1598,6 +1748,40 @@ async def api_tenor_search(request):
 UNFURL_TIMEOUT = 10
 UNFURL_MAX_BYTES = 2_000_000
 UNFURL_UA = "Botcord/1.0 (+link-preview)"
+# Only the web ports may be fetched — anything else is a port-scan probe.
+UNFURL_PORTS = (80, 443)
+UNFURL_MAX_REDIRECTS = 5
+
+_HTTP_SESSION: ClientSession | None = None
+_HTTP_LOCK: asyncio.Lock | None = None
+
+
+async def http_session() -> ClientSession:
+    """One shared outbound HTTP session (pooling, one UA, one timeout).
+
+    Created lazily on first use, closed by on_shutdown. Besides being
+    faster, this is what makes per-hop redirect control possible.
+    """
+    global _HTTP_SESSION, _HTTP_LOCK
+    if _HTTP_LOCK is None:
+        _HTTP_LOCK = asyncio.Lock()
+    async with _HTTP_LOCK:
+        if _HTTP_SESSION is None or _HTTP_SESSION.closed:
+            _HTTP_SESSION = ClientSession(
+                timeout=ClientTimeout(total=UNFURL_TIMEOUT),
+                headers={"User-Agent": UNFURL_UA},
+            )
+        return _HTTP_SESSION
+
+
+async def close_http_session():
+    global _HTTP_SESSION
+    sess, _HTTP_SESSION = _HTTP_SESSION, None
+    if sess is not None and not sess.closed:
+        try:
+            await sess.close()
+        except Exception:
+            pass
 
 # Host suffixes that never leave the local network.
 _BLOCKED_SUFFIXES = (".localhost", ".local", ".internal", ".lan", ".home")
@@ -1706,32 +1890,66 @@ def _abs_http(base: str, ref: str | None) -> str | None:
 
 
 async def fetch_unfurl(url: str) -> dict:
-    """Fetch a page and return {url, site, title, description, image, icon}."""
+    """Fetch a page and return {url, site, title, description, image, icon}.
+
+    Redirects are followed manually (never by the HTTP client) so EVERY hop
+    passes the same SSRF validation as the initial URL — an attacker link
+    can't bounce a checked hostname onto intranet space, odd ports, or
+    non-HTTP schemes.
+    """
     try:
         parts = urlparse(url)
     except Exception:
         raise ValueError("BAD-URL")
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise ValueError("BAD-URL")
-    host = parts.hostname
-    port = parts.port or (443 if parts.scheme == "https" else 80)
-    if _unfurl_host_blocked(host):
-        raise ValueError("UNFURL-BLOCKED")
-    await _unfurl_guard(host, port)
 
-    headers = {"User-Agent": UNFURL_UA, "Accept": "text/html,application/xhtml+xml"}
+    sess = await http_session()
+    current = url
     try:
-        async with ClientSession(
-            timeout=ClientTimeout(total=UNFURL_TIMEOUT), headers=headers
-        ) as sess:
-            async with sess.get(url, max_redirects=5, allow_redirects=True) as resp:
-                if resp.status != 200:
-                    raise ValueError(f"UNFURL-FAILED: HTTP {resp.status}")
-                ctype = str(resp.headers.get("Content-Type") or "").lower()
-                if "html" not in ctype:
-                    raise ValueError("UNFURL-NOT-HTML")
-                final = str(resp.url)
-                raw = await resp.content.read(UNFURL_MAX_BYTES)
+        for _ in range(UNFURL_MAX_REDIRECTS + 1):
+            try:
+                hop = urlparse(current)
+            except Exception:
+                raise ValueError("BAD-URL")
+            if hop.scheme not in ("http", "https") or not hop.hostname:
+                raise ValueError("BAD-URL")
+            host = hop.hostname
+            port = hop.port or (443 if hop.scheme == "https" else 80)
+            if port not in UNFURL_PORTS:
+                raise ValueError("UNFURL-BLOCKED")
+            if _unfurl_host_blocked(host):
+                raise ValueError("UNFURL-BLOCKED")
+            await _unfurl_guard(host, port)
+            try:
+                async with sess.get(
+                    current,
+                    allow_redirects=False,
+                    headers={"Accept": "text/html,application/xhtml+xml"},
+                ) as resp:
+                    if resp.status in (301, 302, 303, 307, 308):
+                        loc = resp.headers.get("Location")
+                        await resp.read()  # drain so the connection is reused
+                        if not loc:
+                            raise ValueError("UNFURL-FAILED: redirect without Location")
+                        current = urljoin(str(resp.url), loc)
+                        continue
+                    if resp.status != 200:
+                        raise ValueError(f"UNFURL-FAILED: HTTP {resp.status}")
+                    ctype = str(resp.headers.get("Content-Type") or "").lower()
+                    if "html" not in ctype:
+                        raise ValueError("UNFURL-NOT-HTML")
+                    final = str(resp.url)
+                    raw = await resp.content.read(UNFURL_MAX_BYTES)
+                    break
+            except ValueError:
+                raise
+            except asyncio.TimeoutError:
+                raise ValueError("UNFURL-FAILED: timeout")
+            except ClientError as exc:
+                raise ValueError(f"UNFURL-FAILED: {exc}")
+        else:
+            raise ValueError("UNFURL-FAILED: too many redirects")
     except ValueError:
         raise
     except Exception as exc:
@@ -1867,7 +2085,7 @@ async def api_send_message(request):
             body = {}
         if not isinstance(body, dict):
             body = {}
-        content = body.get("content") or ""
+        content = coerce_content(body.get("content"))
         embed_data = body.get("embed")
         if isinstance(body, dict) and "mention_author" in body:
             mention_author = bool(body.get("mention_author"))
@@ -1921,13 +2139,13 @@ async def api_send_message(request):
     files = []
     if upload is not None:
         try:
-            data = upload.file.read()
+            data = read_upload_capped(upload, MAX_UPLOAD_BYTES)
+        except _UploadTooLarge:
+            return web.json_response({"error": "FILE-TOO-LARGE"}, status=413)
         except Exception as exc:
             return web.json_response(
                 {"error": f"BAD-UPLOAD: {exc}"}, status=400
             )
-        if len(data) > MAX_UPLOAD_BYTES:
-            return web.json_response({"error": "FILE-TOO-LARGE"}, status=413)
         if not data:
             return web.json_response({"error": "BAD-UPLOAD"}, status=400)
         files = [
@@ -1981,7 +2199,7 @@ async def api_edit_message(request):
         body = await request.json()
     except Exception:
         body = {}
-    content = body.get("content") or ""
+    content = coerce_content(body.get("content"))
     if not content.strip():
         return web.json_response({"error": "EMPTY-MESSAGE"}, status=400)
     try:
@@ -2154,8 +2372,8 @@ async def api_create_invite(request):
         body = {}
     try:
         invite = await channel.create_invite(
-            max_age=int(body.get("max_age", 86400)),
-            max_uses=int(body.get("max_uses", 0) or 0),
+            max_age=parse_int(body.get("max_age"), 86400, 0, 604800),
+            max_uses=parse_int(body.get("max_uses"), 0, 0, 100),
             unique=True,
         )
     except discord.Forbidden:
@@ -2284,7 +2502,10 @@ async def websocket_handler(request):
 
 
 def build_app() -> web.Application:
-    app = web.Application(middlewares=[password_middleware])
+    app = web.Application(
+        middlewares=[request_log_middleware, password_middleware],
+        client_max_size=MAX_REQUEST_BYTES,
+    )
     app.add_routes(routes)
     app.router.add_static("/js/", WEB_DIR / "js", show_index=False)
     # legacy asset folders reused directly (no duplication)
@@ -2328,6 +2549,10 @@ def build_app() -> web.Application:
                 await janitor
             except (asyncio.CancelledError, Exception):
                 pass
+        try:
+            await close_http_session()
+        except Exception:
+            pass
         async with SESSIONS_LOCK:
             sessions = list(SESSIONS.values())
             SESSIONS.clear()
@@ -2346,7 +2571,7 @@ def main():
     parser = argparse.ArgumentParser(description="Botcord Python host")
     parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     parser.add_argument(
-        "--port", type=int, default=int(os.environ.get("PORT", "8080"))
+        "--port", type=int, default=_int_env("PORT", 8080, 1, 65535)
     )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)

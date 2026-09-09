@@ -33,6 +33,8 @@ const S = {
     latencyMs: null,
     replyTo: null, // {id, channel_id, authorId, name, snippet} | null
     replyMention: true, // ping the quoted author on reply (Discord default)
+    unread: {}, // channelId -> {count, mention} for channels not currently open
+    history: { cid: null, loading: false, exhausted: false }, // scroll-back state
 };
 
 // Reject a promise that never settles, so the splash screen always either
@@ -86,12 +88,89 @@ const el = (tag, cls, text) => {
 };
 const DEFAULT_AVATAR = '/resources/images/default.png';
 
-function toast(msg, ms) {
-    const t = $('toast');
-    t.innerText = msg;
-    t.classList.remove('hidden');
-    clearTimeout(t._timer);
-    t._timer = setTimeout(() => t.classList.add('hidden'), ms || 4000);
+/* Stacked toasts: concurrent errors queue instead of overwriting each
+ * other. Optional action button: toast(msg, ms, {label, fn}). */
+function toast(msg, ms, action) {
+    const wrap = $('toast');
+    if (!wrap) return;
+    wrap.classList.remove('hidden');
+    const item = el('div', 'toastItem');
+    item.appendChild(el('span', '', String(msg)));
+    if (action && action.label) {
+        const btn = el('button', 'toastAction', action.label);
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            dismiss();
+            try {
+                action.fn && action.fn();
+            } catch (err) {
+                /* ignore */
+            }
+        });
+        item.appendChild(btn);
+    }
+    const dismiss = () => {
+        try {
+            item.classList.add('toastOut');
+            setTimeout(() => {
+                item.remove();
+                if (!wrap.children.length) wrap.classList.add('hidden');
+            }, 300);
+        } catch (err) {
+            try {
+                item.remove();
+            } catch (e) {
+                /* ignore */
+            }
+        }
+    };
+    item.addEventListener('click', dismiss);
+    wrap.appendChild(item);
+    while (wrap.children.length > 4) wrap.firstChild.remove();
+    setTimeout(dismiss, ms || 4000);
+}
+
+/* Inline channel-error state: a blank message list explains itself and
+ * offers a Retry button instead of leaving a bare toast behind. */
+
+function channelErrorText(code) {
+    const known = {
+        'MISSING-ACCESS':
+            "The bot can't see this channel. Check its roles and channel permissions.",
+        'HISTORY-TIMEOUT': 'Loading took too long. Try again in a moment.',
+        'REQUEST-TIMEOUT':
+            'The server took too long to answer. Try again in a moment.',
+        'CONNECTION-REFUSED':
+            'Could not reach the Python host. Is server.py running?',
+    };
+    if (known[code]) return known[code];
+    if (String(code).startsWith('MISSING-PERMISSIONS')) {
+        return "The bot doesn't have permission to do that.";
+    }
+    return `Something went wrong while loading messages (Error: ${code}).`;
+}
+
+function showChannelError(title, err, retryFn) {
+    const list = $('message-list');
+    if (!list) return;
+    const raw = (err && (err.code || err.error)) || 'UNKNOWN';
+    const code = String(raw && raw.code ? raw.code : raw);
+    list.innerHTML = '';
+    const box = el('div', 'channelError');
+    box.appendChild(el('div', 'channelErrorIcon', '⚠'));
+    box.appendChild(el('p', 'channelErrorTitle', title || "Couldn't load messages"));
+    box.appendChild(el('p', 'channelErrorText', channelErrorText(code)));
+    const btn = el('button', 'channelErrorRetry', 'Retry');
+    btn.addEventListener('click', () => {
+        list.innerHTML = '';
+        try {
+            retryFn && retryFn();
+        } catch (e) {
+            /* selectChannel/selectGuild surface their own errors */
+        }
+    });
+    box.appendChild(btn);
+    list.appendChild(box);
 }
 
 function copyText(text, label) {    const done = () => toast((label || 'Copied') + ' to clipboard');
@@ -482,6 +561,7 @@ function barry(text, del) {
 
     list.scrollTop = list.scrollHeight;
     $('msgbox').value = '';
+    saveDraftFor();
     if (del && del > 1) setTimeout(() => div.remove(), del);
 }
 
@@ -681,6 +761,7 @@ function openSettings() {
     paintThemeChoices();
     paintSettingsAccount();
     paintStatusPills();
+    paintNotifyCheck();
     const m = $('settingsModal');
     if (m) m.classList.remove('hidden');
 }
@@ -722,6 +803,15 @@ function paintStatusPills() {
         document.querySelectorAll('.statusPill').forEach((b) => {
             b.classList.toggle('selected', b.dataset.status === PresenceSel.status);
         });
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+function paintNotifyCheck() {
+    try {
+        const box = $('notifyCheck');
+        if (box) box.checked = notifyEnabled();
     } catch (e) {
         /* ignore */
     }
@@ -1030,7 +1120,10 @@ async function selectGuild(gid) {
     }
     if (!loaded) {
         console.error('no readable channel in guild', gid, lastErr);
-        errorHandler(lastErr && (lastErr.code || lastErr.error) ? lastErr : { code: 'MISSING-ACCESS' });
+        const err = lastErr && (lastErr.code || lastErr.error) ? lastErr : { code: 'MISSING-ACCESS' };
+        errorHandler(err);
+        const gname = (g && g.name) || 'this server';
+        showChannelError(`Couldn't load ${gname}`, err, () => selectGuild(gid));
     }
     } catch (e) {
         console.error('selectGuild failed', e);
@@ -1087,6 +1180,7 @@ function renderChannelList(g) {
         .forEach((c) => {
             const div = el('div', 'channel');
             div.id = c.id;
+            div.dataset.channelId = c.id;
 
             const svg = el('img', 'channelSVG');
             svg.src = `/resources/icons/${CHANNEL_ICONS[c.type] || 'GuildTextChannel'}.svg`;
@@ -1114,6 +1208,7 @@ function renderChannelList(g) {
                 e.preventDefault();
                 channelContextMenu(e, c);
             });
+            paintUnread(c.id);
         });
 }
 
@@ -1738,8 +1833,8 @@ function addHeader(darkBG, m) {
     uname.appendChild(ts);
 }
 
-function appendMessage(m, prev) {
-    const list = $('message-list');
+function appendMessage(m, prev, target) {
+    const list = target || $('message-list');
     if ($(m.id)) {
         updateMessageDom(m);
         return;
@@ -1786,11 +1881,21 @@ function buildMessageSkeletons(n) {
     }
     return wrap;
 }
-function renderMessages(messages) {
+function renderMessages(messages, opts) {
     clearMessages();
+    S.history = {
+        cid: S.channel ? String(S.channel.id) : null,
+        loading: false,
+        exhausted:
+            opts && typeof opts.exhausted === 'boolean'
+                ? opts.exhausted
+                : (messages || []).length === 0,
+    };
     const list = $('message-list');
+    ensureHistorySentinel();
+    paintHistorySentinel((messages || []).length ? 'more' : 'empty');
     let prev = null;
-    messages.forEach((m, i) => {
+    (messages || []).forEach((m, i) => {
         // day divider with a label, Discord-style ("Today" / "Yesterday" / date)
         if (!prev || !sameDay(prev.timestamp, m.timestamp)) {
             list.appendChild(daySeparator(m.timestamp));
@@ -1798,10 +1903,177 @@ function renderMessages(messages) {
         appendMessage(m, prev);
         prev = m;
     });
-    const shell = el('div', 'sorryNoLoad');
-    shell.appendChild(el('p', '', 'Sorry! No messages beyond this point can be displayed.'));
-    $('message-list').prepend(shell);
+    if (S.history.exhausted) paintHistorySentinel((messages || []).length ? 'exhausted' : 'empty');
     $('message-list').scrollTop = $('message-list').scrollHeight;
+}
+
+/* ==================== scroll-back pagination ===========================
+ * The old "Sorry! No messages beyond this point" wall is gone: scrolling
+ * to the top (or tapping the sentinel) loads the next older page via the
+ * backend's `before` cursor. The seam with the live list is repaired so
+ * grouping and day dividers stay correct, and the scroll position holds.
+ */
+
+const HISTORY_INITIAL = 100;
+const HISTORY_PAGE = 50;
+let historyIO = null;
+
+function historyObserver() {
+    if (historyIO) return historyIO;
+    try {
+        historyIO = new IntersectionObserver(
+            (entries) => {
+                entries.forEach((en) => {
+                    if (en.isIntersecting) loadOlder();
+                });
+            },
+            { root: $('message-list'), rootMargin: '200px 0px 0px 0px', threshold: 0 }
+        );
+    } catch (e) {
+        historyIO = null;
+    }
+    return historyIO;
+}
+
+function ensureHistorySentinel() {
+    const list = $('message-list');
+    if (!list) return null;
+    let s = $('historyTop');
+    if (!s) {
+        s = el('div', 'historySentinel');
+        s.id = 'historyTop';
+        list.prepend(s);
+        s.addEventListener('click', () => {
+            if (!S.history.loading && !S.history.exhausted) loadOlder();
+        });
+    } else if (s.parentNode !== list) {
+        list.prepend(s);
+    }
+    try {
+        const io = historyObserver();
+        if (io) {
+            io.disconnect();
+            io.observe(s);
+        }
+    } catch (e) {
+        /* observer is best-effort; the tap target always works */
+    }
+    return s;
+}
+
+function paintHistorySentinel(state) {
+    const s = $('historyTop');
+    if (!s) return;
+    s.classList.remove('historyMore', 'historyLoading', 'historyExhausted', 'historyEmpty', 'historyRetry');
+    if (state === 'loading') {
+        s.classList.add('historyLoading');
+        s.innerText = 'Loading older messages…';
+    } else if (state === 'exhausted') {
+        s.classList.add('historyExhausted');
+        s.innerText = 'Beginning of channel history';
+    } else if (state === 'empty') {
+        s.classList.add('historyEmpty');
+        s.innerText = 'No messages here yet — say hi!';
+    } else if (state === 'retry') {
+        s.classList.add('historyRetry');
+        s.innerText = "Couldn't load older messages — tap to retry";
+    } else {
+        s.classList.add('historyMore');
+        s.innerText = '↑ Scroll up to load older messages';
+    }
+}
+
+function seamMerges(stagedTs, stagedAuthor, liveBlock) {
+    try {
+        if (!liveBlock || !liveBlock.classList.contains('firstmsg')) return false;
+        if (String(liveBlock.dataset.authorId) !== String(stagedAuthor)) return false;
+        if (!sameDay(stagedTs, liveBlock.dataset.timestamp)) return false;
+        const diff = new Date(liveBlock.dataset.timestamp) - new Date(stagedTs);
+        return diff >= 0 && diff < 7 * 60 * 1000;
+    } catch (e) {
+        return false;
+    }
+}
+
+function prependMessages(older) {
+    const list = $('message-list');
+    if (!list || !older.length) return;
+    const liveFirstBlock = list.querySelector('.messageBlock');
+    const prevHeight = list.scrollHeight;
+    const prevTop = list.scrollTop;
+    // render the page into staging with the exact same grouping logic
+    const staging = document.createElement('div');
+    let prev = null;
+    older.forEach((m) => {
+        if (!prev || !sameDay(prev.timestamp, m.timestamp)) {
+            staging.appendChild(daySeparator(m.timestamp));
+        }
+        appendMessage(m, prev, staging);
+        prev = m;
+    });
+    // the old top divider was only correct as a batch top: drop it and
+    // repair the seam from scratch
+    const oldTopSep = list.querySelector(':scope > .daySeparator');
+    if (oldTopSep) oldTopSep.remove();
+    const lastOlder = older[older.length - 1];
+    const stagedBlocks = staging.querySelectorAll('.messageBlock');
+    const lastStaged = stagedBlocks.length ? stagedBlocks[stagedBlocks.length - 1] : null;
+    // insert staging right after the sentinel
+    const sentinel = $('historyTop');
+    let anchor = sentinel ? sentinel.nextSibling : list.firstChild;
+    Array.from(staging.childNodes).forEach((n) => list.insertBefore(n, anchor));
+    if (liveFirstBlock && lastOlder) {
+        if (lastStaged && seamMerges(lastOlder.timestamp, lastOlder.author.id, liveFirstBlock)) {
+            // live head continues the staged group: drop its header
+            ['messageImg', 'messageUsername'].forEach((cls) => {
+                const n = liveFirstBlock.querySelector(':scope > .' + cls);
+                if (n) n.remove();
+            });
+            liveFirstBlock.classList.remove('firstmsg');
+        } else if (!sameDay(lastOlder.timestamp, liveFirstBlock.dataset.timestamp)) {
+            list.insertBefore(daySeparator(liveFirstBlock.dataset.timestamp), liveFirstBlock.closest('.messageCont') || liveFirstBlock);
+        }
+    }
+    // hold the reader's position despite the taller list
+    try {
+        list.scrollTop = prevTop + (list.scrollHeight - prevHeight);
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+async function loadOlder() {
+    if (!S.channel || S.history.loading || S.history.exhausted) return;
+    const list = $('message-list');
+    if (!list) return;
+    const cid = String(S.channel.id);
+    if (S.history.cid && S.history.cid !== cid) return; // stale state, reset on next render
+    const first = list.querySelector('.messageBlock');
+    if (!first || !first.id || isPendingId(first.id)) return;
+    S.history.loading = true;
+    paintHistorySentinel('loading');
+    try {
+        const data = await withTimeout(
+            Api.messages(cid, { limit: HISTORY_PAGE, before: first.id }),
+            30000,
+            'REQUEST-TIMEOUT'
+        );
+        if (!S.channel || String(S.channel.id) !== cid) return; // switched away
+        const older = (data && data.messages) || [];
+        if (!older.length) {
+            S.history.exhausted = true;
+            paintHistorySentinel('exhausted');
+            return;
+        }
+        if (older.length < HISTORY_PAGE) S.history.exhausted = true;
+        prependMessages(older);
+        paintHistorySentinel(S.history.exhausted ? 'exhausted' : 'more');
+    } catch (e) {
+        console.error('history page failed', e);
+        paintHistorySentinel('retry');
+    } finally {
+        S.history.loading = false;
+    }
 }
 
 function updateMessageDom(m) {
@@ -1855,6 +2127,14 @@ async function selectChannel(c, div, opts) {
     S.generating = true;
     try {
         S._lastChannelError = null;
+        // stash the previous channel's draft before S.channel is overwritten
+        try {
+            if (S.channel && S.channel.id && String(S.channel.id) !== String(c.id || c.channel_id)) {
+                saveDraftFor(S.channel.id);
+            }
+        } catch (e) {
+            /* never block channel switches */
+        }
         document.body.classList.remove('show-channels', 'show-members');
         S.channel = {
             id: c.id || c.channel_id,
@@ -1865,6 +2145,7 @@ async function selectChannel(c, div, opts) {
         };
         S.channelDiv = div || null;
         if (div) div.classList.remove('newMsg');
+        clearUnread(S.channel.id);
 
         // drop optimistic sends from other channels (their history refresh
         // or gateway echo covers them when you return)
@@ -1881,7 +2162,7 @@ async function selectChannel(c, div, opts) {
             : `Message #${S.channel.name}`;
         hideMentionSuggest();
         cancelReply();
-        syncMentionBackdrop();
+        restoreDraftFor(S.channel.id);
 
         renderTyping();
         clearMessages();
@@ -1904,7 +2185,9 @@ async function selectChannel(c, div, opts) {
             // superseded by logout / token switch / another channel: don't paint
             // into the cleared UI or hide the splash screen by mistake
             if (!S.me || !S.channel || S.channel.id !== myId) return false;
-            renderMessages(data.messages || []);
+            renderMessages(data.messages || [], {
+                exhausted: (data.messages || []).length < HISTORY_INITIAL,
+            });
             // first successful channel view dismisses the splash screen
             setLoadingPerc(1);
         if (S.channel.guild_id) {
@@ -1925,7 +2208,10 @@ async function selectChannel(c, div, opts) {
             if (d) d.remove();
             // Silent mode is used by selectGuild's fallback loop: don't surface
             // each failed channel, let the caller try the next one.
-            if (!silent) errorHandler(e);
+            if (!silent) {
+                const label = S.channel && !S.channel.isDM ? `#${S.channel.name}` : S.channel ? 'this chat' : 'messages';
+                showChannelError(`Couldn't load ${label}`, e, () => selectChannel(c, div, opts));
+            }
             return false;
         } finally {
             const d = $('loading-container');
@@ -1993,6 +2279,7 @@ function renderDMList() {
         const u = d.recipient;
         const row = el('div', 'dmChannel');
         row.id = u ? `dm-${u.id}` : `dm-chan-${d.channel_id}`;
+        row.dataset.channelId = d.channel_id;
 
         if (u) {
             const img = el('img', 'dmChannelImage');
@@ -2028,6 +2315,7 @@ function renderDMList() {
             );
         });
         div.appendChild(row);
+        paintUnread(d.channel_id);
     });
 }
 
@@ -3218,6 +3506,7 @@ function ensureReplyComposer() {
         e.preventDefault();
         S.replyMention = !S.replyMention;
         renderReplyComposer();
+        saveDraftFor();
     });
     const x = el('button', 'replyCancel', '✕');
     x.title = 'Cancel reply (Esc)';
@@ -3269,6 +3558,7 @@ function startReply(m) {
         snippet: replySnippetFor(m),
     };
     renderReplyComposer();
+    saveDraftFor();
     try {
         $('msgbox').focus();
     } catch (e) {
@@ -3280,6 +3570,99 @@ function cancelReply() {
     if (!S.replyTo) return;
     S.replyTo = null;
     renderReplyComposer();
+    saveDraftFor();
+}
+
+/* ==================== per-channel drafts ===============================
+ * Composed text + reply selection survive channel/guild/DM switches and
+ * even reloads (localStorage `botcord.drafts`, capped). The draft stores
+ * the reply's display data too, so it restores without the original
+ * message being loaded.
+ */
+
+const DRAFT_KEY = 'botcord.drafts';
+const DRAFT_MAX_CHANNELS = 50;
+const DRAFT_MAX_CHARS = 4000;
+let draftCache = null; // {cid: {text, mention, reply:{...}|null}}
+
+function loadDrafts() {
+    if (draftCache) return draftCache;
+    try {
+        const raw = JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}');
+        draftCache = raw && typeof raw === 'object' ? raw : {};
+    } catch (e) {
+        draftCache = {};
+    }
+    return draftCache;
+}
+
+function persistDrafts() {
+    try {
+        const all = loadDrafts();
+        const keys = Object.keys(all);
+        if (keys.length > DRAFT_MAX_CHANNELS) {
+            // drop arbitrary oldest-overflow entries (insertion-ordered)
+            keys.slice(0, keys.length - DRAFT_MAX_CHANNELS).forEach((k) => {
+                delete all[k];
+            });
+        }
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(all));
+    } catch (e) {
+        /* storage full/blocked: drafts just stay in-memory */
+    }
+}
+
+// Snapshot the composer for `cid` (defaults to the open channel). Empty
+// composers delete the entry so nothing stale ever restores.
+function saveDraftFor(cid) {
+    try {
+        cid = cid != null ? String(cid) : S.channel ? String(S.channel.id) : null;
+        if (!cid) return;
+        const box = $('msgbox');
+        const text = (box ? box.value : '').slice(0, DRAFT_MAX_CHARS);
+        const reply =
+            S.replyTo && String(S.replyTo.channel_id) === String(cid)
+                ? {
+                      id: String(S.replyTo.id),
+                      channel_id: String(cid),
+                      authorId: String(S.replyTo.authorId || ''),
+                      name: String(S.replyTo.name || 'unknown'),
+                      snippet: String(S.replyTo.snippet || ''),
+                  }
+                : null;
+        const all = loadDrafts();
+        if (!text && !reply) {
+            if (all[cid]) {
+                delete all[cid];
+                persistDrafts();
+            }
+            return;
+        }
+        all[cid] = { text, mention: !!S.replyMention, reply };
+        persistDrafts();
+    } catch (e) {
+        /* never break typing */
+    }
+}
+
+function restoreDraftFor(cid) {
+    try {
+        cid = String(cid);
+        const d = loadDrafts()[cid];
+        const box = $('msgbox');
+        if (!box) return;
+        if (!d) {
+            box.value = '';
+        } else {
+            box.value = d.text || '';
+            S.replyMention = d.mention !== false;
+            S.replyTo = d.reply || null;
+        }
+        renderReplyComposer();
+        syncMentionBackdrop();
+    } catch (e) {
+        /* ignore */
+    }
 }
 
 async function sendCurrent() {
@@ -3350,11 +3733,14 @@ async function sendCurrent() {
                 }
                 $('msgbox').value = '';
                 syncMentionBackdrop();
+                saveDraftFor();
                 try {
                     const r = await Api.bulkDelete(S.channel.id, Math.min(num, 100));
                     barry(`Deleted ${r.deleted} message(s).`, 5000);
                     const data = await Api.messages(S.channel.id, { limit: 100 });
-                    renderMessages(data.messages || []);
+                    renderMessages(data.messages || [], {
+                        exhausted: (data.messages || []).length < HISTORY_INITIAL,
+                    });
                 } catch (e) {
                     errorHandler(e);
                 }
@@ -3376,11 +3762,13 @@ async function sendCurrent() {
         }
         $('msgbox').value = '';
         syncMentionBackdrop();
+        saveDraftFor();
     } else {
         await sendText(Fmt.parseSend(text));
         setTimeout(() => {
             $('msgbox').value = '';
             syncMentionBackdrop();
+            saveDraftFor();
         }, 1);
     }
     return false;
@@ -3419,6 +3807,7 @@ async function sendText(content, embed, opts) {
     // Discord clears the box the moment you hit enter, not on confirm.
     $('msgbox').value = '';
     syncMentionBackdrop();
+    saveDraftFor(channel.id);
     const list = $('message-list');
     list.scrollTop = list.scrollHeight;
     try {
@@ -3603,6 +3992,7 @@ async function sendFileMessage(file, opts) {
     if (node) node.classList.add('pending');
     $('msgbox').value = '';
     syncMentionBackdrop();
+    saveDraftFor(channel.id);
     const list = $('message-list');
     list.scrollTop = list.scrollHeight;
     try {
@@ -4551,6 +4941,223 @@ async function retrySend(tempId) {
     });
 }
 
+/* ==================== unread badges + title alerts =====================
+ * Messages arriving in channels you aren't viewing stack per-channel
+ * counters (red when they ping you, grey otherwise), bold the channel
+ * row, and bump document.title. Opening the channel clears it. Desktop
+ * notifications + a ping sound are opt-in via the settings toggle.
+ */
+
+let baseTitle = null;
+
+function channelRowEl(cid) {
+    try {
+        cid = String(cid);
+        const list = $('channel-elements');
+        if (list) {
+            let hit = null;
+            try {
+                hit = list.querySelector(`[data-channel-id="${CSS.escape(cid)}"]`);
+            } catch (e) {
+                hit = null;
+            }
+            if (hit) return hit;
+        }
+        return $(cid) || null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function paintUnread(cid) {
+    try {
+        cid = String(cid);
+        const row = channelRowEl(cid);
+        if (!row) return;
+        const entry = S.unread[cid];
+        let badge = row.querySelector(':scope > .unreadBadge');
+        row.classList.toggle('hasUnread', !!(entry && entry.count > 0));
+        if (!entry || entry.count <= 0) {
+            if (badge) badge.remove();
+            return;
+        }
+        if (!badge) {
+            badge = el('span', 'unreadBadge');
+            row.appendChild(badge);
+        }
+        badge.innerText = entry.count > 99 ? '99+' : String(entry.count);
+        badge.classList.toggle('mention', !!entry.mention);
+        badge.title = entry.mention ? 'Mentions you' : 'Unread messages';
+    } catch (e) {
+        /* never break list rendering */
+    }
+}
+
+function updateTitle() {
+    try {
+        if (!baseTitle) baseTitle = document.title || 'Botcord Web';
+        let total = 0;
+        let mention = false;
+        Object.values(S.unread || {}).forEach((u) => {
+            total += (u && u.count) || 0;
+            if (u && u.mention) mention = true;
+        });
+        document.title =
+            total > 0 ? (mention ? `(@ ${total}) ${baseTitle}` : `(${total}) ${baseTitle}`) : baseTitle;
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+function clearUnread(cid) {
+    try {
+        cid = String(cid);
+        if (S.unread[cid]) {
+            delete S.unread[cid];
+            paintUnread(cid);
+            updateTitle();
+        }
+    } catch (e) {
+        /* ignore */
+    }
+}
+
+function notifyEnabled() {
+    try {
+        return !!(store.ui && store.ui.notify);
+    } catch (e) {
+        return false;
+    }
+}
+
+function authorDisplayOf(m) {
+    try {
+        const mem = m.member;
+        return (
+            (mem && (mem.display_name || mem.nick)) ||
+            m.author.global_name ||
+            m.author.username ||
+            'Someone'
+        );
+    } catch (e) {
+        return 'Someone';
+    }
+}
+
+function playPing() {
+    try {
+        if (!notifyEnabled()) return;
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        playPing._ctx = playPing._ctx || new AC();
+        const ctx = playPing._ctx;
+        if (ctx.state === 'suspended') {
+            try {
+                ctx.resume().catch(() => {});
+            } catch (e) {
+                /* needs a user gesture first; try again next ping */
+            }
+            return;
+        }
+        const t = ctx.currentTime;
+        [880, 660].forEach((freq, i) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0.0001, t + i * 0.12);
+            gain.gain.exponentialRampToValueAtTime(0.25, t + i * 0.12 + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.12 + 0.11);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(t + i * 0.12);
+            osc.stop(t + i * 0.12 + 0.12);
+        });
+    } catch (e) {
+        /* audio is best-effort */
+    }
+}
+
+function openChannelForMessage(m) {
+    try {
+        if (m.guild_id && S.guilds.some((g) => String(g.id) === String(m.guild_id))) {
+            if (String(S.guildId) !== String(m.guild_id)) {
+                selectGuild(m.guild_id);
+                return;
+            }
+            const ch = (S.channels[m.guild_id] || []).find(
+                (c) => String(c.id) === String(m.channel_id)
+            );
+            if (ch) {
+                const row = channelRowEl(ch.id);
+                if (row) {
+                    row.click();
+                    return;
+                }
+                selectChannel(ch, null);
+                return;
+            }
+        } else if (!m.guild_id) {
+            showDMHome();
+        }
+    } catch (e) {
+        /* best effort only */
+    }
+}
+
+function maybeNotify(m, mention) {
+    try {
+        if (!notifyEnabled() || !('Notification' in window)) return;
+        if (Notification.permission !== 'granted') return;
+        const isDM = !m.guild_id;
+        if (!mention && !isDM) return; // pings + DMs only, not every message
+        if (document.hasFocus && document.hasFocus()) return; // title covers it
+        const snippet = ((m.content || '').trim().slice(0, 150) || '(attachment)');
+        const n = new Notification(authorDisplayOf(m), { body: snippet, tag: `botcord-${m.channel_id}` });
+        n.onclick = () => {
+            try {
+                window.focus();
+            } catch (e) {
+                /* ignore */
+            }
+            openChannelForMessage(m);
+            try {
+                n.close();
+            } catch (e) {
+                /* ignore */
+            }
+        };
+    } catch (e) {
+        /* never break message handling */
+    }
+}
+
+function bumpUnread(m) {
+    try {
+        if (!m || !m.author || !S.me || isPendingId(m.id)) return;
+        if (String(m.author.id) === String(S.me.id)) return; // own messages
+        const cid = String(m.channel_id);
+        if (S.channel && String(S.channel.id) === cid) return; // viewing it
+        const prev = S.unread[cid] || { count: 0, mention: false };
+        let mention = !!prev.mention;
+        const isDM = !m.guild_id;
+        try {
+            if (!mention && (isDM || messageMentionsMe(m) || isReplyToMeSync(m))) {
+                mention = true;
+            }
+        } catch (e) {
+            if (isDM) mention = true;
+        }
+        S.unread[cid] = { count: prev.count + 1, mention };
+        paintUnread(cid);
+        updateTitle();
+        if (mention) playPing();
+        maybeNotify(m, mention);
+    } catch (e) {
+        /* never break message handling */
+    }
+}
+
 /* ============================ incoming events ============================ */
 
 function handleIncomingMessage(m) {
@@ -4583,6 +5190,9 @@ function handleIncomingMessage(m) {
     } else if (S.guildId && m.guild_id === S.guildId) {
         const div = $(m.channel_id);
         if (div) div.classList.add('newMsg');
+        bumpUnread(m);
+    } else {
+        bumpUnread(m);
     }
 }
 
@@ -4944,6 +5554,26 @@ function wireStaticUI() {
     if (presenceBtn) {
         presenceBtn.addEventListener('click', () => doSavePresence());
     }
+    const notifyBox = $('notifyCheck');
+    if (notifyBox) {
+        notifyBox.addEventListener('change', () => {
+            const on = !!notifyBox.checked;
+            try {
+                saveUI({ notify: on });
+            } catch (e) {
+                /* ignore */
+            }
+            if (on) {
+                try {
+                    if ('Notification' in window && Notification.permission === 'default') {
+                        Notification.requestPermission().catch(() => {});
+                    }
+                } catch (e) {
+                    /* permission prompt is best-effort */
+                }
+            }
+        });
+    }
 
     // mobile drawers
     $('chanToggle').addEventListener('click', (e) => {
@@ -4971,6 +5601,7 @@ function wireStaticUI() {
         sendTyping();
         syncMentionBackdrop();
         updateMentionSuggest();
+        saveDraftFor();
         const textElem = $('msgbox');
         const box = $('sendmsg');
         if (textElem.scrollHeight < 38 * 5) {
